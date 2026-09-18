@@ -106,6 +106,30 @@ Start the pipeline first, then FastAPI exposes:
 | `GET /api/data-quality` | before/after quality report |
 | `GET /api/insights` | calculated business statements |
 
+## Power BI
+
+A Power BI business-intelligence report is included alongside the React dashboard.
+
+The report contains five analysis pages:
+
+1. Churn Dashboard
+2. Customer Churn Analysis
+3. Churn by Contract
+4. Customer Risk Analysis
+5. Customer Segmentation & Insights
+
+Power BI deliverables and documentation are available in `powerbi/`:
+
+- `Cusstomer_Churn_Retention_Intelligence.pbix`
+- `README.md`
+- `dax_measures.md`
+- `model_schema.md`
+- `power_query.md`
+- `report_design.md`
+- `portfolio_and_interview.md`
+
+The Power BI report uses the processed customer dataset and complements the React/FastAPI application with a business-intelligence reporting layer.
+
 ## Dashboard pages
 
 Overview, Churn Analytics, Customer Segments, Risk Explorer, Cohort Analysis, Model Performance, Insights, and Data Quality. The UI intentionally uses a restrained analytics visual system: responsive tables/charts, a collapsible mobile sidebar, accessible labels, loading and error states, and a searchable risk-customer panel.
