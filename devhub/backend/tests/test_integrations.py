@@ -210,6 +210,6 @@ def test_ai_provider_request_is_bounded_and_not_stored(monkeypatch):
 
     original = httpx.Client
     monkeypatch.setattr(
-        ai.httpx, "Client", lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs)
+        httpx, "Client", lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs)
     )
     assert ai.generate_text("task_breakdown", "Design tests", {}) == ("Draft", 2)

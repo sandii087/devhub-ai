@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 @dataclass(frozen=True)
 class Settings:
+    frontend_dist: str = field(default_factory=lambda: os.getenv("FRONTEND_DIST", ""))
     process_role: str = field(default_factory=lambda: os.getenv("PROCESS_ROLE", "api"))
     environment: str = field(default_factory=lambda: os.getenv("ENVIRONMENT", "development"))
     database_url: str = field(

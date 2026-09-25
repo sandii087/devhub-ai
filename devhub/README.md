@@ -66,3 +66,9 @@ With both local servers running, from `frontend/` run `npx playwright install ch
 - [Implementation evidence and limitations](docs/progress.md)
 
 Root `.github/workflows/devhub-ci.yml` contains CI; `devhub-release.yml` is manually triggered and gates immutable GHCR images and optional SSH deployment behind protected environments. It does not automatically deploy on push. Configure GitHub environment approvals, credentials and an operator-provisioned host before use. `deploy/compose.production.yaml` is a single-host starting point, not the multi-zone reference architecture. See operations for configuration and recovery gates.
+
+## Free-only hosting (AI unavailable)
+
+A combined same-origin frontend/API image and an explicitly free Render Blueprint are available in `Dockerfile.free` and `render.yaml`. This mode uses external Free PostgreSQL/OIDC and can run the synchronization worker inside the sleeping web instance; it creates no paid worker. AI remains visibly unavailable with no provider credentials, preserving the real provider interface for later activation.
+
+**Live URL: not deployed or verified yet.** Account access and production database/OIDC configuration are pending. Follow [the free deployment guide](docs/free-deployment.md) for exact environment variables, privacy boundaries, quota/sleep limitations, and verification gates. Do not activate billing or supply a payment method.

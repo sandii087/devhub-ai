@@ -1,0 +1,28 @@
+# Import this Blueprint using the devhub/render.yaml path.
+# External PostgreSQL and OIDC must be configured before service startup.
+# No expiring Render database, paid worker, disk, cron or AI key is provisioned.
+services:
+  - type: web
+    name: devhub-ai
+    runtime: docker
+    plan: free
+    rootDir: devhub
+    dockerfilePath: ./Dockerfile.free
+    dockerContext: .
+    healthCheckPath: /health/ready
+    autoDeployTrigger: off
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEV_AUTH_ENABLED
+        value: "false"
+      - key: APP_ORIGIN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: OIDC_ISSUER
+        sync: false
+      - key: OIDC_CLIENT_ID
+        sync: false
+      - key: OIDC_CLIENT_SECRET
+        sync: false

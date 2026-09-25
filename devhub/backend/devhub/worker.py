@@ -112,6 +112,7 @@ def reconcile(org_id: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="Process one pass and exit")
+    parser.add_argument("--interval", type=int, default=2, choices=range(2, 3601), metavar="SECONDS")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     last_reconcile = 0.0
@@ -129,7 +130,7 @@ def main() -> None:
             last_reconcile = time.monotonic()
         if args.once:
             break
-        time.sleep(2)
+        time.sleep(args.interval)
 
 
 if __name__ == "__main__":

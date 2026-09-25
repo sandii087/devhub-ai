@@ -10,6 +10,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -17,7 +18,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from devhub import auth, core, github, ai
 from devhub.config import settings
 from devhub.db import engine
-from devhub.http_limits import BodyLimitMiddleware
+from devhub.http_limits import BodyLimitMiddleware, DemoRateLimitMiddleware
 
 log = logging.getLogger("devhub.http")
 
@@ -55,6 +56,8 @@ def create_app() -> FastAPI:
         allowed_hosts=[urlsplit(settings.app_origin).hostname, "127.0.0.1", "localhost", "testserver"],
     )
     app.add_middleware(BodyLimitMiddleware)
+    if settings.frontend_dist:
+        app.add_middleware(DemoRateLimitMiddleware)
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
@@ -81,6 +84,12 @@ def create_app() -> FastAPI:
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
         response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        if settings.frontend_dist and (request.url.path == "/" or request.url.path.startswith("/assets/")):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+                "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; "
+                "frame-ancestors 'none'; form-action 'self'"
+            )
         log.info(
             "request method=%s path=%s status=%s elapsed_ms=%.1f request_id=%s",
             request.method,
@@ -149,6 +158,8 @@ def create_app() -> FastAPI:
     app.include_router(core.router)
     app.include_router(github.router)
     app.include_router(ai.router)
+    if settings.frontend_dist:
+        app.mount("/", StaticFiles(directory=settings.frontend_dist, html=True), name="frontend")
     return app
 
 
