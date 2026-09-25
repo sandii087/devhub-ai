@@ -1,0 +1,74 @@
+name: DevHub approved release
+on:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy after publishing images (requires protected production environment)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  checks:
+    uses: ./.github/workflows/devhub-ci.yml
+  publish:
+    needs: checks
+    environment: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      api: ${{ steps.images.outputs.api }}
+      web: ${{ steps.images.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: api
+        uses: docker/build-push-action@v6
+        with:
+          context: devhub
+          push: true
+          tags: ghcr.io/${{ github.repository }}-api:${{ github.sha }}
+      - id: web
+        uses: docker/build-push-action@v6
+        with:
+          context: devhub
+          file: devhub/frontend/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository }}-web:${{ github.sha }}
+      - id: images
+        env:
+          REPOSITORY: ${{ github.repository }}
+          API_DIGEST: ${{ steps.api.outputs.digest }}
+          WEB_DIGEST: ${{ steps.web.outputs.digest }}
+        run: |
+          echo "api=ghcr.io/${REPOSITORY}-api@${API_DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "web=ghcr.io/${REPOSITORY}-web@${WEB_DIGEST}" >> "$GITHUB_OUTPUT"
+  deploy:
+    if: inputs.deploy
+    needs: publish
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy through pre-provisioned host release command
+        env:
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          API_IMAGE: ${{ needs.publish.outputs.api }}
+          WEB_IMAGE: ${{ needs.publish.outputs.web }}
+        run: |
+          test -n "$DEPLOY_HOST" && test -n "$DEPLOY_USER" && test -n "$KNOWN_HOSTS"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/devhub
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/devhub ~/.ssh/known_hosts
+          ssh -i ~/.ssh/devhub -o BatchMode=yes -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" /opt/devhub/release.sh "$API_IMAGE" "$WEB_IMAGE"

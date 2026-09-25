@@ -1,0 +1,14 @@
+export type Role = 'owner' | 'admin' | 'member' | 'viewer' | 'maintainer' | 'contributor';
+export type User = { id: string; email: string; display_name: string };
+export type Session = { user: User | null; csrf_token: string | null; auth_mode: 'development' | 'oidc' | 'unconfigured' };
+export type Page<T> = { items: T[]; total: number };
+export type Organization = { id: string; name: string; slug: string; role?: Role; current_user_role?: Role };
+export type Project = { id: string; name: string; slug: string; description: string; visibility: 'organization' | 'private'; version: number; effective_role?: Role; role?: Role; created_at?: string };
+export type Member = { user_id: string; email: string; display_name: string; role: Role; active?: boolean; user?: User };
+export type TaskStatus = 'todo' | 'in_progress' | 'done';
+export type Priority = 'low' | 'medium' | 'high' | 'urgent';
+export type Task = { id: string; title: string; description: string; status: TaskStatus; priority: Priority; version: number; assignee_id: string | null; created_by?: string; creator_id?: string; created_at?: string; updated_at?: string };
+export type Discussion = { id: string; title: string; body: string; version: number; created_by?: string; creator_id?: string; created_at?: string; comment_count?: number };
+export type Comment = { id: string; body: string; author_id?: string; created_by?: string; created_at?: string; author?: User };
+export type Installation = { id?: string; installation_id: number; account_login?: string; account?: string; enabled?: boolean; verified?: boolean };
+export type Repository = { id: string; full_name: string; html_url: string; sync_state: string; last_synced_at: string | null; open_issues_count: number | null; default_branch: string | null };

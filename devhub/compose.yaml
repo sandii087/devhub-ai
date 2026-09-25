@@ -1,0 +1,72 @@
+# Local development only. Use deploy/compose.production.yaml for deployment.
+name: devhub
+services:
+  database:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: devhub_owner
+      POSTGRES_PASSWORD: local-only-owner
+      POSTGRES_DB: devhub
+    volumes: [postgres_data:/var/lib/postgresql]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U devhub_owner -d devhub"]
+      interval: 3s
+      retries: 20
+    restart: unless-stopped
+  migrate:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://devhub_owner:local-only-owner@database/devhub
+      DB_APP_PASSWORD: local-only-app
+      DB_WORKER_PASSWORD: local-only-worker
+    command: [sh, -c, "alembic -c backend/alembic.ini upgrade head && python scripts/provision_roles.py"]
+    depends_on:
+      database: {condition: service_healthy}
+  api:
+    build: .
+    environment: &app_environment
+      ENVIRONMENT: development
+      DEV_AUTH_ENABLED: "true"
+      APP_ORIGIN: http://localhost:8080
+      DATABASE_URL: postgresql+psycopg://devhub_app:local-only-app@database/devhub
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_PRIVATE_KEY: ${GITHUB_PRIVATE_KEY:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      GITHUB_INSTALLATION_BINDINGS: ${GITHUB_INSTALLATION_BINDINGS:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+  worker:
+    build: .
+    environment:
+      <<: *app_environment
+      PROCESS_ROLE: worker
+      DATABASE_URL: postgresql+psycopg://devhub_worker:local-only-worker@database/devhub
+      OPENAI_API_KEY: ""
+      OIDC_CLIENT_SECRET: ""
+    command: [python, -m, devhub.worker]
+    healthcheck: {disable: true}
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+  web:
+    build: {context: ., dockerfile: frontend/Dockerfile}
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+volumes:
+  postgres_data:

@@ -1,0 +1,38 @@
+# Requires an external managed PostgreSQL service and HTTPS ingress.
+# Supply runtime configuration in protected files on the deployment host.
+name: devhub-production
+services:
+  api:
+    image: ${DEVHUB_API_IMAGE:?Supply an immutable API image digest}
+    env_file: [api.env]
+    environment:
+      ENVIRONMENT: production
+      DEV_AUTH_ENABLED: "false"
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    deploy:
+      resources:
+        limits: {cpus: "2", memory: 1G}
+  worker:
+    image: ${DEVHUB_API_IMAGE:?Supply an immutable API image digest}
+    env_file: [worker.env]
+    environment:
+      ENVIRONMENT: production
+      PROCESS_ROLE: worker
+      DEV_AUTH_ENABLED: "false"
+    command: [python, -m, devhub.worker]
+    restart: unless-stopped
+    healthcheck: {disable: true}
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+  web:
+    image: ${DEVHUB_WEB_IMAGE:?Supply an immutable web image digest}
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped

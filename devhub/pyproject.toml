@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=75,<83"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devhub"
+version = "0.1.0"
+description = "Developer collaboration workspace"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.128,<1",
+  "uvicorn[standard]>=0.39,<1",
+  "sqlalchemy>=2.0.40,<2.1",
+  "alembic>=1.16,<2",
+  "psycopg[binary]>=3.2,<4",
+  "httpx>=0.28,<1",
+  "authlib>=1.8,<2",
+  "joserfc>=1.7,<2",
+  "PyJWT[crypto]>=2.10,<3",
+  "python-dotenv>=1.1,<2",
+  "email-validator>=2.2,<3",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.4,<10", "pytest-cov>=6,<8", "ruff>=0.12,<1"]
+local-postgres = ["pgserver>=0.1.4,<0.2"]
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = ["backend"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
