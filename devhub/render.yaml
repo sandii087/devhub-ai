@@ -9,7 +9,7 @@ services:
     rootDir: devhub
     dockerfilePath: ./Dockerfile.free
     dockerContext: .
-    healthCheckPath: /health/ready
+    healthCheckPath: /health/live
     autoDeployTrigger: off
     envVars:
       - key: ENVIRONMENT
