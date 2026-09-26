@@ -51,10 +51,10 @@ def create_app() -> FastAPI:
         redoc_url=None,
         openapi_url="/openapi.json" if settings.environment != "production" else None,
     )
-    app.add_middleware(
-        TrustedHostMiddleware,
-        allowed_hosts=[urlsplit(settings.app_origin).hostname, "127.0.0.1", "localhost", "testserver"],
-    )
+    allowed_hosts = [urlsplit(settings.app_origin).hostname, "127.0.0.1", "localhost", "testserver"]
+    if settings.render_external_hostname:
+        allowed_hosts.append(settings.render_external_hostname)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
     app.add_middleware(BodyLimitMiddleware)
     if settings.frontend_dist:
         app.add_middleware(DemoRateLimitMiddleware)

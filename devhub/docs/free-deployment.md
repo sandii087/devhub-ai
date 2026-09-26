@@ -42,6 +42,8 @@ The dedicated production Docker/Compose configuration remains available. The com
 
 `PORT` is supplied by Render; `FRONTEND_DIST` is supplied by the image. Set worker configuration in Render after provisioning the restricted role. Without it, core collaboration works but queued synchronization does not run.
 
+Render also supplies `RENDER_EXTERNAL_HOSTNAME`. The backend allows that exact service hostname alongside the `APP_ORIGIN` hostname and existing local health/test hosts; other `onrender.com` services remain rejected. Do not configure a wildcard. Keep `APP_ORIGIN` equal to the public HTTPS origin used for login: it still controls OAuth callback URLs and CSRF origin validation. After updating host-validation code, rebuild and redeploy the existing web service using `Dockerfile.free`; no database migration or database environment changes are needed.
+
 ## Future AI activation
 
 The application boundary is `AIProvider.generate(kind, prompt, context)`. `OpenAIResponsesProvider` retains the real Responses API implementation. Missing key or model fails closed before opening an HTTP client; the UI reports the provider unavailable and disables generation. No fake output or alternate AI implementation exists. Core collaboration is independent of provider availability.

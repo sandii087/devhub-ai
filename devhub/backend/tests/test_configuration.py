@@ -6,6 +6,50 @@ from dataclasses import replace
 from devhub import auth
 from devhub.config import Settings
 from devhub.http_limits import BodyLimitMiddleware
+from fastapi.testclient import TestClient
+from devhub import main
+
+
+@pytest.mark.parametrize("render_host", ["", "devhub-host-test.onrender.com"])
+def test_exact_render_host_allowlist(monkeypatch, render_host):
+    monkeypatch.setenv("RENDER_EXTERNAL_HOSTNAME", render_host)
+    configured = Settings(
+        environment="production", app_origin="https://devhub.example", dev_auth_enabled=False
+    )
+    configured.validate()
+    monkeypatch.setattr(main, "settings", configured)
+    # Host validation is independent of startup database checks; do not enter lifespan here.
+    client = TestClient(main.create_app())
+    try:
+        for host in ("devhub.example", "localhost", "127.0.0.1", "testserver"):
+            assert client.get("/health/live", headers={"Host": host}).status_code == 200
+        expected = 200 if render_host else 400
+        assert (
+            client.get("/health/live", headers={"Host": "devhub-host-test.onrender.com"}).status_code
+            == expected
+        )
+        for host in (
+            "other-service.onrender.com",
+            "devhub-host-test.onrender.com.evil.example",
+            "evil.example",
+        ):
+            response = client.get(
+                "/health/live",
+                headers={"Host": host, "X-Forwarded-Host": "devhub-host-test.onrender.com"},
+            )
+            assert response.status_code == 400
+            assert response.text == "Invalid host header"
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize(
+    "hostname",
+    ["*", "*.onrender.com", "https://devhub.onrender.com", "devhub.onrender.com/", "evil.example"],
+)
+def test_render_host_configuration_rejects_wildcards_and_urls(hostname):
+    with pytest.raises(ValueError, match="one exact onrender.com hostname"):
+        Settings(render_external_hostname=hostname).validate()
 
 
 def test_production_configuration_fails_closed(monkeypatch):

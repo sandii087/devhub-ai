@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 import os
+import re
 from urllib.parse import urlparse
 
 
@@ -17,6 +18,9 @@ class Settings:
     )
     app_origin: str = field(
         default_factory=lambda: os.getenv("APP_ORIGIN", "http://localhost:8000").rstrip("/")
+    )
+    render_external_hostname: str = field(
+        default_factory=lambda: os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip().lower()
     )
     dev_auth_enabled: bool = field(
         default_factory=lambda: os.getenv("DEV_AUTH_ENABLED", "false").lower() == "true"
@@ -37,6 +41,10 @@ class Settings:
     openai_model: str = field(default_factory=lambda: os.getenv("OPENAI_MODEL", ""))
 
     def validate(self) -> None:
+        if self.render_external_hostname and not re.fullmatch(
+            r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.onrender\.com", self.render_external_hostname
+        ):
+            raise ValueError("RENDER_EXTERNAL_HOSTNAME must be one exact onrender.com hostname")
         if not self.database_url.startswith(("postgresql://", "postgresql+psycopg://")):
             raise ValueError("DATABASE_URL must use PostgreSQL")
         origin = urlparse(self.app_origin)
