@@ -26,7 +26,7 @@ erDiagram
 
 | Entity | Key fields and invariants |
 | --- | --- |
-| User | UUID PK, display name, email, disabled flag, timestamps. Email is profile data; OIDC identity is issuer + subject, not email alone |
+| User | UUID PK, display name, email, disabled flag, timestamps. Email is profile data; OAuth identity is issuer + subject, not email alone |
 | Identity | Unique `(issuer, subject)`, FK user; never silently merge accounts by email |
 | Session | Hash of random cookie PK, user FK, CSRF secret, created/last-seen/absolute-expiry/revocation; indexes by user and expiry |
 | Login attempt | Hashed state, nonce, PKCE verifier, browser binding, expiry; consumed once |

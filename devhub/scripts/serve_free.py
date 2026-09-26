@@ -47,7 +47,7 @@ def main():
             worker_env = dict(
                 os.environ, PROCESS_ROLE="worker", DATABASE_URL=os.environ["WORKER_DATABASE_URL"]
             )
-            for key in ("WORKER_DATABASE_URL", "OIDC_CLIENT_SECRET", "OPENAI_API_KEY"):
+            for key in ("WORKER_DATABASE_URL", "GITHUB_CLIENT_SECRET", "OPENAI_API_KEY"):
                 worker_env.pop(key, None)
             processes.append(
                 subprocess.Popen(

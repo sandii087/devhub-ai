@@ -1,22 +1,18 @@
-"""Same-origin browser authentication with opaque sessions and backend OIDC."""
+"""Same-origin GitHub OAuth authentication with opaque server-side sessions."""
 
+import base64
 from datetime import UTC, datetime, timedelta
 import hashlib
 import hmac
 import ipaddress
+import json
 import secrets
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from uuid import uuid4
 
-from authlib.integrations.base_client.errors import OAuthError
-from authlib.integrations.httpx_client import OAuth2Client
-from authlib.oidc.core import CodeIDToken
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 import httpx
-from joserfc import jwt
-from joserfc.errors import JoseError
-from joserfc.jwk import KeySet
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, TypeAdapter, ValidationError
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
@@ -33,6 +29,11 @@ SESSION_LIFETIME = timedelta(hours=12)
 FLOW_LIFETIME = timedelta(minutes=10)
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _email_adapter = TypeAdapter(EmailStr)
+GITHUB_ISSUER = "https://github.com"
+GITHUB_AUTHORIZE = "https://github.com/login/oauth/authorize"
+GITHUB_TOKEN = "https://github.com/login/oauth/access_token"
+GITHUB_USER = "https://api.github.com/user"
+GITHUB_EMAILS = "https://api.github.com/user/emails"
 
 
 class UserView(BaseModel):
@@ -44,7 +45,7 @@ class UserView(BaseModel):
 class SessionView(BaseModel):
     user: UserView | None
     csrf_token: str | None
-    auth_mode: Literal["development", "oidc", "unconfigured"]
+    auth_mode: Literal["development", "github", "unconfigured"]
 
 
 class DevelopmentLogin(BaseModel):
@@ -86,15 +87,15 @@ def _development_enabled() -> bool:
     )
 
 
-def _oidc_configured() -> bool:
-    return bool(settings.oidc_issuer and settings.oidc_client_id and settings.oidc_client_secret)
+def _github_configured() -> bool:
+    return bool(settings.github_client_id.strip() and settings.github_client_secret.strip())
 
 
-def auth_mode() -> Literal["development", "oidc", "unconfigured"]:
+def auth_mode() -> Literal["development", "github", "unconfigured"]:
     if _development_enabled():
         return "development"
-    if _oidc_configured():
-        return "oidc"
+    if _github_configured():
+        return "github"
     return "unconfigured"
 
 
@@ -272,121 +273,104 @@ def logout(
     _private_response(response)
 
 
-def _provider_json(url: str) -> dict:
-    # Redirects and environment proxy settings cannot change the credential destination.
-    with httpx.Client(timeout=10, follow_redirects=False, trust_env=False) as client:
-        with client.stream("GET", url, headers={"Accept": "application/json"}) as response:
-            response.raise_for_status()
-            data = bytearray()
-            for chunk in response.iter_bytes():
-                data.extend(chunk)
-                if len(data) > 262_144:
-                    raise ValueError("Provider response too large")
-    import json
-
-    result = json.loads(data)
-    if not isinstance(result, dict):
-        raise ValueError("Invalid provider response")
-    return result
+def _github_json(client: httpx.Client, method: str, url: str, **kwargs):
+    """Fixed callers only; bound responses and never follow credential-bearing redirects."""
+    with client.stream(method, url, **kwargs) as response:
+        if 300 <= response.status_code < 400:
+            raise ValueError("Unexpected GitHub redirect")
+        response.raise_for_status()
+        data = bytearray()
+        for chunk in response.iter_bytes():
+            data.extend(chunk)
+            if len(data) > 262_144:
+                raise ValueError("GitHub response too large")
+    return json.loads(data)
 
 
-def _provider_metadata() -> dict:
-    issuer = settings.oidc_issuer
-    if not _oidc_configured():
-        raise HTTPException(503, "OIDC sign-in is not configured")
-    parsed = urlsplit(issuer)
-    if parsed.scheme != "https" or parsed.query or parsed.fragment or parsed.username or parsed.password:
-        raise ValueError("OIDC issuer must be a trusted HTTPS URL")
-    metadata = _provider_json(issuer.rstrip("/") + "/.well-known/openid-configuration")
-    if metadata.get("issuer") != issuer:
-        raise ValueError("OIDC discovery issuer mismatch")
-    for key in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
-        endpoint = metadata.get(key)
-        if (
-            not isinstance(endpoint, str)
-            or _origin(endpoint) != _origin(issuer)
-            or urlsplit(endpoint).fragment
-        ):
-            raise ValueError("OIDC endpoints must use the configured issuer origin")
-    if "S256" not in metadata.get("code_challenge_methods_supported", []):
-        raise ValueError("OIDC provider must advertise PKCE S256")
-    return metadata
-
-
-def _oauth_client() -> OAuth2Client:
-    return OAuth2Client(
-        client_id=settings.oidc_client_id,
-        client_secret=settings.oidc_client_secret,
-        scope="openid email profile",
-        redirect_uri=settings.app_origin.rstrip("/") + "/auth/callback",
-        token_endpoint_auth_method="client_secret_basic",
-        code_challenge_method="S256",
-        timeout=10,
+def _exchange_code(code: str, verifier: str) -> dict:
+    if not _github_configured():
+        raise HTTPException(503, "GitHub sign-in is not configured")
+    with httpx.Client(
+        timeout=httpx.Timeout(10, connect=3),
         follow_redirects=False,
         trust_env=False,
-    )
-
-
-def _validated_claims(token: dict, metadata: dict, nonce: str) -> dict:
-    encoded = token.get("id_token")
-    if not isinstance(encoded, str) or len(encoded) > 32_768:
-        raise ValueError("Missing or oversized ID token")
-    keys = _provider_json(metadata["jwks_uri"])
-    decoded = jwt.decode(encoded, KeySet.import_key_set(keys), algorithms=["RS256", "ES256"])
-    claims = CodeIDToken(
-        decoded.claims,
-        decoded.header,
-        options={
-            "iss": {"essential": True, "value": settings.oidc_issuer},
-            "aud": {"essential": True, "value": settings.oidc_client_id},
-            "sub": {"essential": True},
-        },
-        params={
-            "nonce": nonce,
-            "client_id": settings.oidc_client_id,
-            "access_token": token.get("access_token"),
-        },
-    )
-    claims.validate(leeway=30)
-    if not isinstance(claims.get("sub"), str) or not 1 <= len(claims["sub"]) <= 255:
-        raise ValueError("Invalid identity subject")
-    if claims.get("email_verified") is not True:
-        raise ValueError("A verified provider email is required")
-    email = str(_email_adapter.validate_python(claims.get("email")))
+        headers={"Accept": "application/json", "User-Agent": "DevHub"},
+    ) as client:
+        token = _github_json(
+            client,
+            "POST",
+            GITHUB_TOKEN,
+            data={
+                "client_id": settings.github_client_id,
+                "client_secret": settings.github_client_secret,
+                "code": code,
+                "code_verifier": verifier,
+                "redirect_uri": settings.app_origin.rstrip("/") + "/auth/callback",
+            },
+        )
+        if not isinstance(token, dict) or token.get("error"):
+            raise ValueError("GitHub rejected the authorization code")
+        access_token = token.get("access_token")
+        if (
+            not isinstance(access_token, str)
+            or not access_token
+            or len(access_token) > 4096
+            or any(ord(c) < 33 or ord(c) > 126 for c in access_token)
+            or str(token.get("token_type", "")).lower() != "bearer"
+        ):
+            raise ValueError("Invalid GitHub access token")
+        headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json"}
+        profile = _github_json(client, "GET", GITHUB_USER, headers=headers)
+        emails = _github_json(client, "GET", GITHUB_EMAILS, headers=headers, params={"per_page": 100})
+    # The OAuth token is used only for these identity calls and is never persisted.
+    if not isinstance(profile, dict) or type(profile.get("id")) is not int or profile["id"] <= 0:
+        raise ValueError("Invalid GitHub user identity")
+    if not isinstance(emails, list):
+        raise ValueError("Invalid GitHub email response")
+    primary = [
+        item
+        for item in emails
+        if isinstance(item, dict) and item.get("primary") is True and item.get("verified") is True
+    ]
+    if len(primary) != 1:
+        raise ValueError("A verified primary GitHub email is required")
+    email = str(_email_adapter.validate_python(primary[0].get("email")))
     if len(email) > 254:
         raise ValueError("Invalid email")
-    result = dict(claims)
-    result["email"] = email
-    name = result.get("name")
-    result["name"] = name.strip()[:100] if isinstance(name, str) and name.strip() else email[:100]
-    return result
-
-
-def _exchange_code(code: str, verifier: str, nonce: str) -> dict:
-    metadata = _provider_metadata()
-    with _oauth_client() as client:
-        token = client.fetch_token(metadata["token_endpoint"], code=code, code_verifier=verifier)
-    return _validated_claims(token, metadata, nonce)
+    name = profile.get("name") or profile.get("login")
+    name = name.strip()[:100] if isinstance(name, str) and name.strip() else email[:100]
+    return {"sub": str(profile["id"]), "email": email, "name": name}
 
 
 @router.get("/login")
-def oidc_login(request: Request, db: DatabaseSession = Depends(get_db)) -> Response:
-    try:
-        metadata = _provider_metadata()
-        state, nonce, verifier, browser = (secrets.token_urlsafe(32) for _ in range(4))
-        with _oauth_client() as client:
-            url, _ = client.create_authorization_url(
-                metadata["authorization_endpoint"],
-                state=state,
-                nonce=nonce,
-                code_verifier=verifier,
-            )
-    except (httpx.HTTPError, OAuthError, ValueError, KeyError) as exc:
-        raise HTTPException(503, "Identity provider unavailable or misconfigured") from exc
+def github_login(request: Request, db: DatabaseSession = Depends(get_db)) -> Response:
+    if not _github_configured():
+        raise HTTPException(503, "GitHub sign-in is not configured")
+    state, verifier, browser = (secrets.token_urlsafe(32) for _ in range(3))
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    url = (
+        GITHUB_AUTHORIZE
+        + "?"
+        + urlencode(
+            {
+                "client_id": settings.github_client_id,
+                "redirect_uri": settings.app_origin.rstrip("/") + "/auth/callback",
+                "scope": "read:user user:email",
+                "state": state,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            }
+        )
+    )
     db.add(
         OIDCFlow(
             state_hash=_hash(state),
-            nonce=nonce,
+            # Retain the existing schema. This marker rejects pre-switch OIDC attempts.
+            nonce="github-oauth",
             code_verifier=verifier,
             browser_hash=_hash(browser),
             expires_at=_now() + FLOW_LIFETIME,
@@ -408,7 +392,7 @@ def oidc_login(request: Request, db: DatabaseSession = Depends(get_db)) -> Respo
 
 
 @router.get("/callback")
-def oidc_callback(request: Request, db: DatabaseSession = Depends(get_db)) -> Response:
+def github_callback(request: Request, db: DatabaseSession = Depends(get_db)) -> Response:
     state = request.query_params.get("state", "")
     browser = request.cookies.get(_flow_cookie_name(), "")
     if not state or not browser or len(state) > 128 or len(browser) > 128:
@@ -426,20 +410,18 @@ def oidc_callback(request: Request, db: DatabaseSession = Depends(get_db)) -> Re
         .returning(OIDCFlow.nonce, OIDCFlow.code_verifier)
     ).first()
     db.commit()
-    if not flow:
+    if not flow or flow.nonce != "github-oauth":
         raise HTTPException(400, "Invalid or expired sign-in attempt")
     code = request.query_params.get("code", "")
     if request.query_params.get("error") or not code or len(code) > 4096:
         raise HTTPException(400, "Sign-in was not completed")
-    if request.query_params.get("iss", settings.oidc_issuer) != settings.oidc_issuer:
-        raise HTTPException(400, "Invalid sign-in issuer")
     try:
-        claims = _exchange_code(code, flow.code_verifier, flow.nonce)
+        claims = _exchange_code(code, flow.code_verifier)
     except httpx.HTTPError as exc:
         raise HTTPException(503, "Identity provider unavailable; restart sign-in") from exc
-    except (OAuthError, JoseError, ValueError, KeyError, ValidationError) as exc:
+    except (ValueError, KeyError, ValidationError) as exc:
         raise HTTPException(400, "Invalid sign-in response; restart sign-in") from exc
-    user = _identity_user(db, settings.oidc_issuer, claims["sub"], claims["email"], claims["name"])
+    user = _identity_user(db, GITHUB_ISSUER, claims["sub"], claims["email"], claims["name"])
     response = Response(status_code=303, headers={"Location": "/"})
     _new_session(request, response, db, user)
     response.delete_cookie(

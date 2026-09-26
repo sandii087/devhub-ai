@@ -8,7 +8,7 @@ The user selected a developer collaboration hub with organizations, projects, ta
 
 | ID | Capability | Acceptance condition |
 | --- | --- | --- |
-| R1 | Sign in and maintain session | OIDC validates issuer, audience, nonce, state, signature and expiry; logout revokes the session |
+| R1 | Sign in and maintain session | GitHub OAuth validates state, browser binding, expiry, PKCE and primary verified email; logout revokes the session |
 | R2 | Organizations and membership | Creator becomes owner; role changes are authorized; the last owner cannot be removed |
 | R3 | Projects | Organization-visible and private projects; private project lists never reveal unauthorized names/counts |
 | R4 | Tasks | Create, assign, filter, update status and edit with conflict detection |
@@ -24,17 +24,17 @@ Organization roles: owner, admin, member, viewer. Owner/admin may manage all pro
 | Milestone | Deliverables | Exit gate |
 | --- | --- | --- |
 | M0 — foundation and documentation | Independent app layout, architecture/schema/API/security/operations docs, pinned dependencies, environment contract | No import from old product; boundaries and startup steps reviewable |
-| M1 — identity and tenancy | PostgreSQL models/migrations, sessions, OIDC, organizations, role checks, tenant isolation | Auth and cross-tenant tests; production rejects development auth |
+| M1 — identity and tenancy | PostgreSQL models/migrations, sessions, GitHub OAuth, organizations, role checks, tenant isolation | Auth and cross-tenant tests; production rejects development auth |
 | M2 — projects and tasks | Responsive UI, project visibility/grants, task CRUD and assignment, optimistic concurrency | Full browser workflow plus role/foreign-ID/conflict tests |
 | M3 — discussions | Threads, comments, author/moderator controls | End-to-end creation and authorization tests |
 | M4 — GitHub and asynchronous work | Signed webhook receipts, installation/repo verification, idempotent processing, retry worker | Forged/duplicate/out-of-order delivery tests; provider outage isolation |
 | M5 — release hardening | CI, containers, migration/rollback/runbooks, security review and dependency checks | All automated checks; documented operator launch gates |
 
-Dependencies: M1 precedes all collaboration; M2 precedes discussions and repository mapping; M4 depends on stable organization policies; M5 validates the whole system. UI work may proceed against the agreed API contract after M0. Production secrets and accounts do not block local tests, but live OIDC/GitHub verification is a release gate.
+Dependencies: M1 precedes all collaboration; M2 precedes discussions and repository mapping; M4 depends on stable organization policies; M5 validates the whole system. UI work may proceed against the agreed API contract after M0. Production secrets and accounts do not block local tests, but live GitHub OAuth/GitHub App verification is a release gate.
 
 ## Release gates requiring an operator environment
 
-Choose cloud region and budget, register OIDC and GitHub applications with exact callback URLs, provision least-privilege database roles and secrets, validate TLS/ingress rules, exercise backup restore and failover, load test the planning envelope, and assign alert/on-call ownership. Do not describe template files or passing local tests as a deployed production service.
+Choose cloud region and budget, register GitHub OAuth and GitHub repository-integration applications with exact callback URLs, provision least-privilege database roles and secrets, validate TLS/ingress rules, exercise backup restore and failover, load test the planning envelope, and assign alert/on-call ownership. Do not describe template files or passing local tests as a deployed production service.
 
 ## Change policy
 

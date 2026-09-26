@@ -21,9 +21,10 @@ class Settings:
     dev_auth_enabled: bool = field(
         default_factory=lambda: os.getenv("DEV_AUTH_ENABLED", "false").lower() == "true"
     )
-    oidc_issuer: str = field(default_factory=lambda: os.getenv("OIDC_ISSUER", ""))
-    oidc_client_id: str = field(default_factory=lambda: os.getenv("OIDC_CLIENT_ID", ""))
-    oidc_client_secret: str = field(default_factory=lambda: os.getenv("OIDC_CLIENT_SECRET", ""))
+    github_client_id: str = field(default_factory=lambda: os.getenv("GITHUB_CLIENT_ID", ""))
+    github_client_secret: str = field(
+        default_factory=lambda: os.getenv("GITHUB_CLIENT_SECRET", ""), repr=False
+    )
     github_app_id: str = field(default_factory=lambda: os.getenv("GITHUB_APP_ID", ""))
     github_private_key: str = field(
         default_factory=lambda: os.getenv("GITHUB_PRIVATE_KEY", "").replace("\\n", "\n")
@@ -57,10 +58,7 @@ class Settings:
                 raise ValueError("Development authentication is forbidden in production")
             if origin.scheme != "https":
                 raise ValueError("Production APP_ORIGIN must use HTTPS")
-            if self.process_role == "api" and (
-                not self.oidc_issuer or not self.oidc_client_id or not self.oidc_client_secret
-            ):
-                raise ValueError("Production requires OIDC configuration")
+            # Missing OAuth credentials leave sign-in unavailable; never fall back to dev auth.
 
 
 settings = Settings()

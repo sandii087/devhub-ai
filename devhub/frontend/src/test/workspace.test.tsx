@@ -11,10 +11,10 @@ const session = { user, csrf_token: 'csrf-test', auth_mode: 'development' as con
 function respond(data: unknown, status = 200) { return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }); }
 
 describe('Workspace boundaries', () => {
-  it('renders OIDC sign-in without a development bypass', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(respond({ user: null, csrf_token: null, auth_mode: 'oidc' })));
+  it('renders GitHub sign-in without a development bypass', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(respond({ user: null, csrf_token: null, auth_mode: 'github' })));
     render(<App />);
-    expect(await screen.findByRole('link', { name: /sign in with your organization/i })).toHaveAttribute('href', '/auth/login');
+    expect(await screen.findByRole('link', { name: /sign in with GitHub/i })).toHaveAttribute('href', '/auth/login');
     expect(screen.queryByRole('textbox', { name: /email address/i })).not.toBeInTheDocument();
   });
   it('sends the CSRF token only on mutations and never as a URL parameter', async () => {

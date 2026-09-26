@@ -16,7 +16,7 @@ flowchart LR
   E --> S[Static assets]
   E --> A[FastAPI modular monolith]
   A --> P[(PostgreSQL)]
-  A --> I[Managed OIDC provider]
+  A --> I[GitHub OAuth]
   G[GitHub App webhooks] --> A
   W[Background worker] --> P
   W --> G
@@ -26,7 +26,7 @@ flowchart LR
 
 The backend is a modular monolith with identity, organization policy, project collaboration, and GitHub integration boundaries. Modules share one transactional database and deployment artifact; a worker runs separately. Modules call explicit policy and service functions rather than HTTP calls to each other. HTTP handlers validate transport data; domain policy checks authorize both resources and changed fields before persistence.
 
-The React SPA uses the same origin for `/api/v1` and `/auth`. The backend holds OIDC credentials; the browser gets an opaque cookie and a CSRF token. Public SEO and server-side rendering are not current requirements. Frontend permissions improve usability; only backend decisions enforce access.
+The React SPA uses the same origin for `/api/v1` and `/auth`. The backend holds GitHub OAuth credentials; the browser gets an opaque cookie and a CSRF token. Public SEO and server-side rendering are not current requirements. Frontend permissions improve usability; only backend decisions enforce access.
 
 ## Major decisions
 
@@ -37,14 +37,14 @@ The React SPA uses the same origin for `/api/v1` and `/auth`. The backend holds 
 | PostgreSQL + SQLAlchemy + Alembic | Referential integrity, concurrency, migrations, row security; SQLite is not the production database | Demonstrated workload requiring another store |
 | Shared schema, `org_id` tenant keys | Efficient small-tenant operation; requires rigorous isolation tests | Contractual isolation/residency requires dedicated tenant databases |
 | Application RBAC plus tenant RLS | Resource policies handle private projects; database reduces accidental cross-tenant reads | External policy engine justified by policy complexity |
-| Managed OIDC + server-side sessions | Provider handles passwords/MFA; local revocation is immediate for new requests | Native/mobile or external API clients become required |
+| GitHub OAuth + server-side sessions | Provider handles passwords/MFA; local revocation is immediate for new requests | Native/mobile or external API clients become required |
 | Transactional outbox + leased worker | A committed mutation also commits its event; retries may duplicate delivery and must be idempotent | Queue contention or traffic warrants a managed broker |
 | GitHub App, read-only metadata | Installation permissions are scoped; no personal access token storage or code execution | Explicit requirement for repository writes or source ingestion |
 | No cache dependency initially | Correctness and revocation remain simple | Measured database bottleneck with a safe invalidation design |
 
 ## Module ownership
 
-Identity owns users, provider identities, sessions, and OIDC login attempts. Organizations own membership, invitations, roles, and audit entries. Collaboration owns projects, project grants, tasks, discussions, and comments. Integration owns installations, repository mappings, delivery receipts, and synchronization. No client can set `org_id`, creator, role, or foreign resource fields without server validation.
+Identity owns users, provider identities, sessions, and OAuth login attempts (existing `oidc_flows` table). Organizations own membership, invitations, roles, and audit entries. Collaboration owns projects, project grants, tasks, discussions, and comments. Integration owns installations, repository mappings, delivery receipts, and synchronization. No client can set `org_id`, creator, role, or foreign resource fields without server validation.
 
 Project content is strongly consistent. GitHub metadata and notifications are eventually consistent and expose freshness/error states. PostgreSQL is authoritative; provider outages do not prevent local project work. A worker retries with bounded exponential backoff, dead-letter state, and idempotency. External calls never hold database locks.
 

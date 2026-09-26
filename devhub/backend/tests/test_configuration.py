@@ -2,21 +2,36 @@ import asyncio
 
 import pytest
 
+from dataclasses import replace
+from devhub import auth
 from devhub.config import Settings
 from devhub.http_limits import BodyLimitMiddleware
 
 
-def test_production_configuration_fails_closed():
+def test_production_configuration_fails_closed(monkeypatch):
     values = dict(
         environment="production",
         app_origin="https://devhub.example",
         dev_auth_enabled=False,
-        oidc_issuer="",
-        oidc_client_id="",
-        oidc_client_secret="",
+        github_client_id="",
+        github_client_secret="",
     )
-    with pytest.raises(ValueError, match="OIDC"):
-        Settings(**values).validate()
+    configured = Settings(**values)
+    configured.validate()
+    monkeypatch.setattr(auth, "settings", configured)
+    assert auth.auth_mode() == "unconfigured"
+    monkeypatch.setattr(auth, "settings", replace(configured, github_client_id="client"))
+    assert auth.auth_mode() == "unconfigured"
+    monkeypatch.setattr(
+        auth,
+        "settings",
+        replace(
+            configured,
+            github_client_id="client",
+            github_client_secret="configured",  # pragma: allowlist secret -- synthetic test fixture
+        ),
+    )
+    assert auth.auth_mode() == "github"
     Settings(**values, process_role="worker").validate()
     with pytest.raises(ValueError, match="forbidden"):
         Settings(**dict(values, dev_auth_enabled=True), process_role="worker").validate()

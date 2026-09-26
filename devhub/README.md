@@ -2,7 +2,7 @@
 
 A developer collaboration workspace built independently in `devhub/`. It imports no customer-churn code or data. React/TypeScript supplies the responsive frontend; FastAPI, SQLAlchemy, Alembic and PostgreSQL provide the API and persistence.
 
-Implemented: organizations and roles, private projects and grants, versioned tasks, discussions/replies, OIDC sessions, signed GitHub webhooks and metadata synchronization, and opt-in AI drafting. See [verified milestones and remaining launch gates](docs/progress.md).
+Implemented: organizations and roles, private projects and grants, versioned tasks, discussions/replies, GitHub OAuth sessions, signed GitHub webhooks and metadata synchronization, and opt-in AI drafting. See [verified milestones and remaining launch gates](docs/progress.md).
 
 ## Run locally
 
@@ -52,7 +52,7 @@ With both local servers running, from `frontend/` run `npx playwright install ch
 
 ## Provider configuration
 
-- **OIDC:** configure issuer, client ID and client secret; register `APP_ORIGIN/auth/callback`. The implementation requires verified email and discovery endpoints on the issuer's HTTPS origin. Confirm compatibility with the chosen provider. Sessions are opaque, revocable, browser cookies with CSRF/origin checks; tokens never enter browser storage.
+- **GitHub OAuth login:** register a GitHub OAuth App with callback `APP_ORIGIN/auth/callback`, then configure `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` on the backend. Requests use `read:user user:email`, random state, PKCE S256, browser binding and single-use expiry. The backend fetches `/user` and `/user/emails`, requires a primary verified email, and maps the numeric GitHub ID to issuer `https://github.com`. No OIDC discovery or ID token is used. Access tokens are discarded after identity lookup; DevHub retains its opaque sessions and CSRF/origin checks. Missing credentials show sign-in as unavailable. Existing identities from other issuers are not merged by email. This OAuth App is separate from the repository integration below.
 - **GitHub:** configure a read-only GitHub App, PEM private key, webhook secret and operator-verified `GITHUB_INSTALLATION_BINDINGS` (`installation_id:organization_uuid`, comma separated). Use `APP_ORIGIN/api/v1/webhooks/github` as webhook endpoint. Administrators register installations and link repositories; run the worker to synchronize metadata. Repository code is not imported or executed.
 - **AI:** supply `OPENAI_API_KEY` and an explicit `OPENAI_MODEL`. An administrator enables each project. Contributors choose whether to include the project description and recent task titles/descriptions. Requests use the Responses API with `store=false`, no tools, bounded output and database quotas. Outputs are drafts and never automatically change tasks or repositories. Provider retention terms still apply; `store=false` does not guarantee zero retention.
 
@@ -69,6 +69,6 @@ Root `.github/workflows/devhub-ci.yml` contains CI; `devhub-release.yml` is manu
 
 ## Free-only hosting (AI unavailable)
 
-A combined same-origin frontend/API image and an explicitly free Render Blueprint are available in `Dockerfile.free` and `render.yaml`. This mode uses external Free PostgreSQL/OIDC and can run the synchronization worker inside the sleeping web instance; it creates no paid worker. AI remains visibly unavailable with no provider credentials, preserving the real provider interface for later activation.
+A combined same-origin frontend/API image and an explicitly free Render Blueprint are available in `Dockerfile.free` and `render.yaml`. This mode uses external Free PostgreSQL/GitHub OAuth and can run the synchronization worker inside the sleeping web instance; it creates no paid worker. AI remains visibly unavailable with no provider credentials, preserving the real provider interface for later activation.
 
-**Live URL: not deployed or verified yet.** Account access and production database/OIDC configuration are pending. Follow [the free deployment guide](docs/free-deployment.md) for exact environment variables, privacy boundaries, quota/sleep limitations, and verification gates. Do not activate billing or supply a payment method.
+**Live URL: not deployed or verified yet.** Account access and production database/GitHub OAuth configuration are pending. Follow [the free deployment guide](docs/free-deployment.md) for exact environment variables, privacy boundaries, quota/sleep limitations, and verification gates. Do not activate billing or supply a payment method.

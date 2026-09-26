@@ -1,6 +1,6 @@
 export type Role = 'owner' | 'admin' | 'member' | 'viewer' | 'maintainer' | 'contributor';
 export type User = { id: string; email: string; display_name: string };
-export type Session = { user: User | null; csrf_token: string | null; auth_mode: 'development' | 'oidc' | 'unconfigured' };
+export type Session = { user: User | null; csrf_token: string | null; auth_mode: 'development' | 'github' | 'unconfigured' };
 export type Page<T> = { items: T[]; total: number };
 export type Organization = { id: string; name: string; slug: string; role?: Role; current_user_role?: Role };
 export type Project = { id: string; name: string; slug: string; description: string; visibility: 'organization' | 'private'; version: number; effective_role?: Role; role?: Role; created_at?: string };

@@ -5,7 +5,7 @@ Local implementation completed on 2026-09-25. This is a tested application basel
 | Milestone | Implemented and verified locally |
 | --- | --- |
 | M0 — foundation | Independent Python/React project, locked dependencies, architecture, schema/API contracts and runbooks |
-| M1 — identity and tenancy | OIDC/PKCE session flow, explicit local login, CSRF, revocation, organization roles, private-project grants, PostgreSQL RLS and tenant foreign keys |
+| M1 — identity and tenancy | GitHub OAuth/PKCE session flow, explicit local login, CSRF, revocation, organization roles, private-project grants, PostgreSQL RLS and tenant foreign keys |
 | M2 — projects/tasks | Responsive workspace, project creation/access, task board, assignment, priorities/status, optimistic version conflicts and transactional audit/outbox |
 | M3 — discussions | Discussions and replies with author/moderator authorization and tenant-scoped access |
 | M4 — GitHub | Operator-bound installations, read-only repository metadata, HMAC webhooks, durable deduplication, leased jobs/retries and reconciliation; provider mocked in tests |
@@ -24,7 +24,7 @@ Screenshots: ignored `output/playwright/devhub-desktop.png` and `devhub-mobile.p
 
 ## Explicit limits and launch gates
 
-- Real OIDC, GitHub and OpenAI account smoke tests require operator secrets and have not run. No generated AI result is fabricated when the provider is unconfigured.
+- Real GitHub OAuth, GitHub App and OpenAI account smoke tests require operator secrets and have not run. No generated AI result is fabricated when the provider is unconfigured.
 - Docker is unavailable on this workstation. Compose/workflow YAML was parsed, but image builds, container smoke tests and hosted GitHub Actions must pass in the operator environment.
 - Invitations add existing users by email; email-delivered invitation acceptance, notifications, full-text search, file attachments, billing and organization deletion/export are deferred.
 - GitHub integrates repository metadata only; self-service installation callbacks, issue/PR mirroring and code ingestion are deferred. API installation/link verification is synchronous with bounded timeouts; load-test lock contention before large-scale adoption.

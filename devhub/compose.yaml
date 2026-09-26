@@ -29,9 +29,8 @@ services:
       DEV_AUTH_ENABLED: "true"
       APP_ORIGIN: http://localhost:8080
       DATABASE_URL: postgresql+psycopg://devhub_app:local-only-app@database/devhub
-      OIDC_ISSUER: ${OIDC_ISSUER:-}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
-      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_PRIVATE_KEY: ${GITHUB_PRIVATE_KEY:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
@@ -52,7 +51,7 @@ services:
       PROCESS_ROLE: worker
       DATABASE_URL: postgresql+psycopg://devhub_worker:local-only-worker@database/devhub
       OPENAI_API_KEY: ""
-      OIDC_CLIENT_SECRET: ""
+      GITHUB_CLIENT_SECRET: ""
     command: [python, -m, devhub.worker]
     healthcheck: {disable: true}
     depends_on:

@@ -2,9 +2,9 @@
 
 ## Authentication
 
-Use managed OIDC authorization code flow with PKCE S256. The backend stores short-lived state, nonce and verifier; the state is bound to the initiating browser and consumed once. Pin the issuer and callback through trusted configuration, validate discovered endpoints, token signature/algorithm, issuer, audience, expiry and nonce, and never treat unverified email as account linkage. Tokens remain server-side; request only identity scopes. Provider MFA is required for privileged production accounts. [OAuth security BCP](https://www.rfc-editor.org/rfc/rfc9700.html).
+Use GitHub OAuth authorization code flow with PKCE S256 and `read:user user:email`. The backend stores hashed state, verifier, browser binding and expiry in the existing `oidc_flows` table. Its legacy nonce field contains a provider marker that rejects pre-switch OIDC attempts. Consume each flow before exchanging the code, even on failure. Use only fixed GitHub endpoints with TLS, bounded responses, no redirects and no environment proxies. Identify users by issuer `https://github.com` and numeric GitHub ID, requiring a primary verified email. Do not merge accounts by email. No discovery, ID-token validation or access-token persistence is used. Keep the existing secure cookies, session expiry/revocation and CSRF protections. [GitHub OAuth flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps).
 
-Issue an opaque high-entropy session cookie; store only its hash, user and lifecycle data. Production cookies use Secure, HttpOnly, SameSite=Lax and host-only scope. Proposed expiry: 30 minutes idle, 12 hours absolute. Rotate on login and privileged elevation; revoke on logout or account disable. Sessions and authorization are checked on every request, so removed memberships lose access on subsequent requests. Use Origin validation plus a synchronizer CSRF token for mutations. Login callbacks use state/nonce/browser binding instead of normal CSRF headers. No bearer tokens in localStorage.
+Issue an opaque high-entropy session cookie; store only its hash, user and lifecycle data. Production cookies use Secure, HttpOnly, SameSite=Lax and host-only scope. Proposed expiry: 30 minutes idle, 12 hours absolute. Rotate on login and privileged elevation; revoke on logout or account disable. Sessions and authorization are checked on every request, so removed memberships lose access on subsequent requests. Use Origin validation plus a synchronizer CSRF token for mutations. Login callbacks use state/PKCE/browser binding instead of normal CSRF headers. No bearer tokens in localStorage.
 
 Development login exists only for local evaluation with explicit configuration; production startup must fail if enabled. It is visibly labeled in the UI. It is not a substitute for provider verification.
 
@@ -31,7 +31,7 @@ Project grants are maintainer/contributor/viewer. Organization viewer is an abso
 | Substitute another tenant/project ID | Composite FKs, scoped lookup, membership/project policy, tenant RLS | Two-tenant and private-project negative tests with real PostgreSQL |
 | Promote self or remove every owner concurrently | Field allowlists, role ceiling, locked last-owner check | Viewer/admin escalation and concurrent owner tests |
 | Steal/fix/replay session | Hashed cookies, rotation, expiry, revocation, no secret logging | Logout/expiry/reuse tests |
-| Cross-site write or login substitution | Origin + CSRF; OIDC state/nonce/PKCE + browser binding | Missing/mismatched token and callback tests |
+| Cross-site write or login substitution | Origin + CSRF; OAuth state/PKCE + browser binding | Missing/mismatched token and callback tests |
 | Stored script in discussion | Render untrusted content as text; no raw HTML, safe links; restrictive CSP | Script/URL payload browser tests |
 | Forge/replay webhook | Raw-byte HMAC, constant-time compare, durable delivery dedupe | Tampered payload and duplicate delivery tests |
 | Link a victim's GitHub installation | Secure install association + provider ownership/installation verification | Foreign/unverified installation rejected |

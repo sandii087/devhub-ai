@@ -1,17 +1,15 @@
-"""Session/OIDC security regressions; database tests use the migrated PostgreSQL test DB."""
+"""Session/GitHub OAuth security regressions; database tests use the migrated PostgreSQL test DB."""
 
+import base64
+import hashlib
+import httpx
 from dataclasses import replace
 from datetime import timedelta
 import os
 from urllib.parse import parse_qs, urlsplit
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from joserfc import jwt
-from joserfc.errors import JoseError
-from joserfc.jwk import RSAKey
 import pytest
 from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import sessionmaker
@@ -22,7 +20,6 @@ from devhub.db import get_db
 from devhub.models import User
 
 ORIGIN = "http://localhost:8000"
-ISSUER = "https://identity.example.com"
 
 
 @pytest.fixture
@@ -32,9 +29,8 @@ def auth_settings(monkeypatch):
         environment="test",
         dev_auth_enabled=True,
         app_origin=ORIGIN,
-        oidc_issuer=ISSUER,
-        oidc_client_id="devhub-test",
-        oidc_client_secret="test-client-secret",
+        github_client_id="devhub-test",
+        github_client_secret="test-client-secret",
     )
     monkeypatch.setattr(auth, "settings", configured)
     return configured
@@ -198,7 +194,7 @@ def test_development_login_cannot_fall_back_in_unsafe_configuration(
         headers={"Origin": origin},
     )
     assert response.status_code == 404
-    assert auth_client.get("/auth/session").json()["auth_mode"] == "oidc"
+    assert auth_client.get("/auth/session").json()["auth_mode"] == "github"
 
 
 def test_development_login_rejects_cross_origin_and_extra_fields(auth_client):
@@ -214,210 +210,254 @@ def test_development_login_rejects_cross_origin_and_extra_fields(auth_client):
     )
 
 
-@pytest.fixture
-def provider_metadata():
-    return {
-        "issuer": ISSUER,
-        "authorization_endpoint": ISSUER + "/authorize",
-        "token_endpoint": ISSUER + "/token",
-        "jwks_uri": ISSUER + "/keys",
-        "code_challenge_methods_supported": ["S256"],
-    }
-
-
-def begin_oidc(client, monkeypatch, metadata):
-    monkeypatch.setattr(auth, "_provider_metadata", lambda: metadata)
+def begin_github(client):
     response = client.get("/auth/login", follow_redirects=False)
     assert response.status_code == 302, response.text
-    query = parse_qs(urlsplit(response.headers["location"]).query)
+    location = urlsplit(response.headers["location"])
+    assert location.scheme + "://" + location.netloc + location.path == auth.GITHUB_AUTHORIZE
+    query = parse_qs(location.query)
+    assert query["scope"] == ["read:user user:email"]
+    assert query["client_id"] == ["devhub-test"]
     assert query["code_challenge_method"] == ["S256"]
     assert query["redirect_uri"] == [ORIGIN + "/auth/callback"]
-    assert "code_verifier" not in query
+    assert len(query["state"][0]) >= 43
+    assert "code_verifier" not in query and "client_secret" not in query and "nonce" not in query
     return query
 
 
-def test_oidc_callback_is_bound_to_browser_and_consumed_once(
-    auth_client,
-    auth_database,
-    monkeypatch,
-    provider_metadata,
-):
-    query = begin_oidc(auth_client, monkeypatch, provider_metadata)
-    state = query["state"][0]
-    original_browser = auth_client.cookies.get("devhub_oidc")
+@pytest.fixture
+def github_transport(monkeypatch):
+    original = httpx.Client
     calls = []
+    responses = {
+        auth.GITHUB_TOKEN: {"access_token": "test-access-token", "token_type": "bearer"},
+        auth.GITHUB_USER: {
+            "id": 12345,
+            "login": "octocat",
+            "name": "GitHub User",
+            "email": "untrusted@example.com",
+        },
+        auth.GITHUB_EMAILS: [
+            {"email": "secondary@example.com", "primary": False, "verified": True},
+            {"email": "primary@example.com", "primary": True, "verified": True},
+        ],
+    }
 
-    def exchange(code, verifier, nonce):
-        calls.append((code, verifier, nonce))
-        assert len(verifier) >= 43 and nonce == query["nonce"][0]
-        return {"sub": "subject-1", "email": "oidc@example.com", "name": "OIDC User"}
+    def handle(request):
+        calls.append(request)
+        url = str(request.url.copy_with(query=None))
+        assert url in responses, "Unexpected external endpoint"
+        result = responses[url]
+        if isinstance(result, Exception):
+            raise result
+        if isinstance(result, httpx.Response):
+            return result
+        return httpx.Response(200, json=result)
 
-    monkeypatch.setattr(auth, "_exchange_code", exchange)
+    def client(**kwargs):
+        assert kwargs["trust_env"] is False and kwargs["follow_redirects"] is False
+        return original(transport=httpx.MockTransport(handle), **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", client)
+    return responses, calls
+
+
+def test_github_state_pkce_and_success_reuses_existing_identity(auth_client, auth_database, github_transport):
+    _, calls = github_transport
+    user_ids = []
+    states = []
+    for _ in range(2):
+        query = begin_github(auth_client)
+        state = query["state"][0]
+        states.append(state)
+        with auth_database() as db:
+            flow = db.get(OIDCFlow, auth._hash(state))
+            assert flow.state_hash != state
+            assert flow.browser_hash == auth._hash(auth_client.cookies.get(auth._flow_cookie_name()))
+            assert auth._now() < flow.expires_at <= auth._now() + auth.FLOW_LIFETIME
+            verifier = flow.code_verifier
+            assert query["code_challenge"] == [
+                base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+            ]
+        response = auth_client.get(f"/auth/callback?state={state}&code=valid", follow_redirects=False)
+        assert response.status_code == 303 and response.headers["location"] == "/"
+        assert "HttpOnly" in response.headers["set-cookie"]
+        session = auth_client.get("/auth/session").json()
+        user_ids.append(session["user"]["id"])
+        assert session["user"]["email"] == "primary@example.com"
+        assert session["csrf_token"]
+        assert "test-access-token" not in response.text + str(response.headers) + str(session)
+        with auth_database() as db:
+            assert db.get(OIDCFlow, auth._hash(state)) is None
+            identity = db.scalar(
+                select(Identity).where(Identity.issuer == "https://github.com", Identity.subject == "12345")
+            )
+            assert identity.user_id == user_ids[-1]
+            assert db.get(User, identity.user_id) is not None
+            assert (
+                db.get(Session, auth._hash(auth_client.cookies.get(auth._cookie_name()))).user_id
+                == identity.user_id
+            )
+        exchange = calls[-3]
+        assert exchange.method == "POST" and not exchange.url.query
+        body = parse_qs(exchange.content.decode())
+        assert body["code_verifier"] == [verifier]
+        assert body["client_id"] == ["devhub-test"]
+        assert body["client_secret"] == [auth.settings.github_client_secret]
+        assert body["redirect_uri"] == [ORIGIN + "/auth/callback"]
+        assert exchange.headers["accept"] == "application/json"
+        for profile_call in calls[-2:]:
+            assert profile_call.method == "GET"
+            assert profile_call.headers["authorization"] == "Bearer test-access-token"
+    assert states[0] != states[1] and user_ids[0] == user_ids[1]
+
+
+def test_callback_browser_binding_and_replay(auth_client, github_transport):
+    _, calls = github_transport
+    state = begin_github(auth_client)["state"][0]
+    browser = auth_client.cookies.get(auth._flow_cookie_name())
     auth_client.cookies.clear()
-    auth_client.cookies.set("devhub_oidc", "another-browser")
-    assert auth_client.get(f"/auth/callback?state={state}&code=code-1").status_code == 400
+    path = f"/auth/callback?state={state}&code=valid"
+    assert auth_client.get(path).status_code == 400
+    auth_client.cookies.set(auth._flow_cookie_name(), "another-browser")
+    assert auth_client.get(path).status_code == 400
     assert not calls
     auth_client.cookies.clear()
-    auth_client.cookies.set("devhub_oidc", original_browser)
-    response = auth_client.get(f"/auth/callback?state={state}&code=code-1", follow_redirects=False)
-    assert response.status_code == 303 and response.headers["location"] == "/"
-    assert len(calls) == 1
+    auth_client.cookies.set(auth._flow_cookie_name(), browser)
+    assert auth_client.get(path, follow_redirects=False).status_code == 303
+    auth_client.cookies.set(auth._flow_cookie_name(), browser)
+    assert auth_client.get(path).status_code == 400
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "",
+        "code=valid",
+        "state=invalid&code=valid",
+        "state={state}&state=other&code=valid",
+        "state={state}&code=one&code=two",
+    ],
+)
+def test_invalid_callback_state(auth_client, github_transport, query):
+    _, calls = github_transport
+    state = begin_github(auth_client)["state"][0]
+    assert auth_client.get("/auth/callback?" + query.format(state=state)).status_code == 400
+    assert not calls
+
+
+@pytest.mark.parametrize("suffix", ["", "&error=access_denied", "&code=" + "x" * 4097])
+def test_missing_code_or_denial_consumes_flow(auth_client, auth_database, github_transport, suffix):
+    _, calls = github_transport
+    state = begin_github(auth_client)["state"][0]
+    assert auth_client.get(f"/auth/callback?state={state}{suffix}").status_code == 400
     with auth_database() as db:
         assert db.get(OIDCFlow, auth._hash(state)) is None
-        assert db.scalar(select(Identity).where(Identity.subject == "subject-1")) is not None
-    auth_client.cookies.set("devhub_oidc", original_browser)
-    assert auth_client.get(f"/auth/callback?state={state}&code=code-1").status_code == 400
-    assert len(calls) == 1
+    assert not calls
 
 
-def test_failed_oidc_validation_still_consumes_attempt(auth_client, monkeypatch, provider_metadata):
-    query = begin_oidc(auth_client, monkeypatch, provider_metadata)
-    calls = []
-
-    def exchange(*args):
-        calls.append(args)
-        raise ValueError("Invalid signature")
-
-    monkeypatch.setattr(auth, "_exchange_code", exchange)
-    path = f"/auth/callback?state={query['state'][0]}&code=invalid"
-    assert auth_client.get(path).status_code == 400
-    assert auth_client.get(path).status_code == 400
-    assert len(calls) == 1
-
-
-def test_expired_oidc_attempt_is_rejected(auth_client, auth_database, monkeypatch, provider_metadata):
-    query = begin_oidc(auth_client, monkeypatch, provider_metadata)
+@pytest.mark.parametrize("change", ["expired", "old_oidc"])
+def test_expired_or_legacy_flow_rejected(auth_client, auth_database, github_transport, change):
+    _, calls = github_transport
+    state = begin_github(auth_client)["state"][0]
     with auth_database() as db:
-        db.execute(update(OIDCFlow).values(expires_at=auth._now() - timedelta(seconds=1)))
-        db.commit()
-    monkeypatch.setattr(auth, "_exchange_code", lambda *_: pytest.fail("Expired flow reached provider"))
-    assert auth_client.get(f"/auth/callback?state={query['state'][0]}&code=code").status_code == 400
-
-
-def test_oidc_does_not_merge_existing_user_by_email(auth_client, monkeypatch, provider_metadata):
-    local_id = login(auth_client)["user"]["id"]
-    query = begin_oidc(auth_client, monkeypatch, provider_metadata)
-    monkeypatch.setattr(
-        auth,
-        "_exchange_code",
-        lambda *_: {
-            "sub": "distinct-provider-subject",
-            "email": "developer@example.com",
-            "name": "OIDC Developer",
-        },
-    )
-    response = auth_client.get(
-        f"/auth/callback?state={query['state'][0]}&code=code",
-        follow_redirects=False,
-    )
-    assert response.status_code == 303
-    assert auth_client.get("/auth/session").json()["user"]["id"] != local_id
-
-
-@pytest.fixture(scope="module")
-def signing_key():
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    private = key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.PKCS8,
-        serialization.NoEncryption(),
-    )
-    public = key.public_key().public_bytes(
-        serialization.Encoding.PEM,
-        serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    return private, RSAKey.import_key(public, {"kid": "test-key"}).as_dict()
-
-
-def signed_token(private, **overrides):
-    now = int(auth._now().timestamp())
-    claims = {
-        "iss": ISSUER,
-        "sub": "oidc-subject",
-        "aud": "devhub-test",
-        "iat": now,
-        "exp": now + 300,
-        "nonce": "expected-nonce",
-        "email": "oidc@example.com",
-        "email_verified": True,
-        "name": "OIDC User",
-    }
-    claims.update(overrides)
-    return jwt.encode({"alg": "RS256", "kid": "test-key"}, claims, RSAKey.import_key(private))
-
-
-def test_provider_claim_validation_uses_signature_and_expected_claims(
-    auth_settings,
-    monkeypatch,
-    provider_metadata,
-    signing_key,
-):
-    private, public = signing_key
-    monkeypatch.setattr(auth, "_provider_json", lambda _: {"keys": [public]})
-    claims = auth._validated_claims({"id_token": signed_token(private)}, provider_metadata, "expected-nonce")
-    assert claims["sub"] == "oidc-subject"
-
-
-@pytest.mark.parametrize(
-    "overrides",
-    [
-        {"iss": "https://attacker.example"},
-        {"aud": "another-client"},
-        {"nonce": "another-attempt"},
-        {"exp": 1},
-        {"iat": 4_000_000_000},
-        {"email_verified": False},
-        {"sub": ""},
-        {"azp": "another-client"},
-    ],
-)
-def test_provider_claim_validation_rejects_wrong_claims(
-    auth_settings,
-    monkeypatch,
-    provider_metadata,
-    signing_key,
-    overrides,
-):
-    private, public = signing_key
-    monkeypatch.setattr(auth, "_provider_json", lambda _: {"keys": [public]})
-    with pytest.raises((JoseError, ValueError)):
-        auth._validated_claims(
-            {"id_token": signed_token(private, **overrides)}, provider_metadata, "expected-nonce"
+        values = (
+            {"expires_at": auth._now() - timedelta(seconds=1)}
+            if change == "expired"
+            else {"nonce": "old-nonce"}
         )
-
-
-def test_provider_claim_validation_rejects_wrong_signature(
-    auth_settings,
-    monkeypatch,
-    provider_metadata,
-    signing_key,
-):
-    private, _ = signing_key
-    other_key = RSAKey.generate_key(2048, {"kid": "test-key"})
-    monkeypatch.setattr(auth, "_provider_json", lambda _: {"keys": [other_key.as_dict(private=False)]})
-    with pytest.raises(JoseError):
-        auth._validated_claims({"id_token": signed_token(private)}, provider_metadata, "expected-nonce")
+        db.execute(update(OIDCFlow).where(OIDCFlow.state_hash == auth._hash(state)).values(**values))
+        db.commit()
+    assert auth_client.get(f"/auth/callback?state={state}&code=valid").status_code == 400
+    assert not calls
 
 
 @pytest.mark.parametrize(
-    "field,value",
+    "endpoint,result,status",
     [
-        ("issuer", "https://attacker.example"),
-        ("token_endpoint", "http://identity.example.com/token"),
-        ("jwks_uri", "https://attacker.example/keys"),
-        ("code_challenge_methods_supported", ["plain"]),
+        (
+            auth.GITHUB_TOKEN,
+            {"error": "bad_verification_code", "error_description": "sensitive-provider-data"},
+            400,
+        ),
+        (auth.GITHUB_TOKEN, {"access_token": "", "token_type": "bearer"}, 400),
+        (auth.GITHUB_TOKEN, {"access_token": "token", "token_type": "unknown"}, 400),
+        (auth.GITHUB_TOKEN, httpx.Response(500), 503),
+        (auth.GITHUB_TOKEN, httpx.ReadTimeout("sensitive-provider-data"), 503),
+        (auth.GITHUB_TOKEN, httpx.Response(302, headers={"location": "https://attacker.example"}), 400),
+        (auth.GITHUB_USER, httpx.Response(401), 503),
+        (auth.GITHUB_USER, {"id": True}, 400),
+        (auth.GITHUB_USER, {"id": "12345"}, 400),
+        (auth.GITHUB_USER, [], 400),
+        (auth.GITHUB_EMAILS, httpx.Response(403), 503),
+        (auth.GITHUB_EMAILS, httpx.Response(429), 503),
+        (auth.GITHUB_EMAILS, httpx.Response(200, text="not-json"), 400),
+        (auth.GITHUB_EMAILS, httpx.Response(200, content=b"x" * 262145), 400),
     ],
 )
-def test_discovery_rejects_untrusted_endpoints_and_missing_pkce(
-    auth_settings,
-    monkeypatch,
-    provider_metadata,
-    field,
-    value,
+def test_provider_errors_are_safe_and_single_use(
+    auth_client, auth_database, github_transport, endpoint, result, status, caplog
 ):
-    monkeypatch.setattr(auth, "_provider_json", lambda _: {**provider_metadata, field: value})
-    with pytest.raises(ValueError):
-        auth._provider_metadata()
+    responses, calls = github_transport
+    responses[endpoint] = result
+    state = begin_github(auth_client)["state"][0]
+    browser = auth_client.cookies.get(auth._flow_cookie_name())
+    path = f"/auth/callback?state={state}&code=valid"
+    response = auth_client.get(path)
+    assert response.status_code == status
+    assert "sensitive-provider-data" not in response.text + caplog.text
+    assert "test-access-token" not in response.text + caplog.text
+    assert auth.settings.github_client_secret not in response.text + caplog.text
+    assert auth_client.get("/auth/session").json()["user"] is None
+    with auth_database() as db:
+        assert db.get(OIDCFlow, auth._hash(state)) is None
+    auth_client.cookies.set(auth._flow_cookie_name(), browser)
+    assert auth_client.get(path).status_code == 400
+    assert sum(str(call.url) == auth.GITHUB_TOKEN for call in calls) == 1
+
+
+@pytest.mark.parametrize(
+    "emails",
+    [
+        [],
+        {},
+        [None],
+        [{"email": "primary@example.com", "primary": True, "verified": False}],
+        [{"email": "secondary@example.com", "primary": False, "verified": True}],
+        [{"email": "bad-email", "primary": True, "verified": True}],
+        [{"primary": True, "verified": True}],
+    ],
+)
+def test_no_verified_primary_email_rejected(auth_client, auth_database, github_transport, emails):
+    responses, _ = github_transport
+    responses[auth.GITHUB_EMAILS] = emails
+    state = begin_github(auth_client)["state"][0]
+    assert auth_client.get(f"/auth/callback?state={state}&code=valid").status_code == 400
+    with auth_database() as db:
+        assert db.scalar(select(Identity).where(Identity.issuer == auth.GITHUB_ISSUER)) is None
+
+
+def test_github_does_not_merge_by_email(auth_client, github_transport):
+    local_id = login(auth_client)["user"]["id"]
+    responses, _ = github_transport
+    responses[auth.GITHUB_EMAILS] = [{"email": "developer@example.com", "primary": True, "verified": True}]
+    responses[auth.GITHUB_USER]["name"] = None
+    state = begin_github(auth_client)["state"][0]
+    assert (
+        auth_client.get(f"/auth/callback?state={state}&code=valid", follow_redirects=False).status_code == 303
+    )
+    user = auth_client.get("/auth/session").json()["user"]
+    assert user["id"] != local_id and user["display_name"] == "octocat"
+
+
+def test_missing_credentials_disable_login(auth_client, auth_settings, monkeypatch, github_transport):
+    monkeypatch.setattr(
+        auth, "settings", replace(auth_settings, dev_auth_enabled=False, github_client_secret="")
+    )
+    assert auth_client.get("/auth/session").json()["auth_mode"] == "unconfigured"
+    assert auth_client.get("/auth/login").status_code == 503
+    assert not github_transport[1]
 
 
 def test_production_cookie_uses_host_prefix_and_secure(auth_settings, monkeypatch):
@@ -433,4 +473,4 @@ def test_production_cookie_uses_host_prefix_and_secure(auth_settings, monkeypatc
     )
     assert auth._cookie_name() == "__Host-devhub_session"
     assert auth._secure_cookie()
-    assert auth.auth_mode() == "oidc"
+    assert auth.auth_mode() == "github"
