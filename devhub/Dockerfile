@@ -9,4 +9,4 @@ RUN pip install --no-cache-dir --no-deps . && useradd --uid 10001 --create-home 
 USER 10001
 EXPOSE 8001
 HEALTHCHECK --interval=30s --timeout=5s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/ready', timeout=3)"
-CMD ["uvicorn", "devhub.main:app", "--host", "0.0.0.0", "--port", "8001", "--no-access-log", "--no-proxy-headers"]
+CMD ["sh", "-c", "cd /app/backend && alembic -c alembic.ini upgrade head && cd /app && exec uvicorn devhub.main:app --host 0.0.0.0 --port 8001 --no-access-log --no-proxy-headers"]
