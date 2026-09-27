@@ -72,7 +72,7 @@ Official API: [Resend send email](https://resend.com/docs/api-reference/emails/s
 
 ## Flows and security decisions
 
-- Signup validates email and a 15–128 character password; common/repetitive passwords are rejected. Passwords use salted scrypt (`N=32768`, `r=8`, `p=3`) with bounded hashing concurrency. No plaintext passwords are stored. Verification is required before email login.
+- Signup validates email and a 8–128 character password with uppercase, lowercase, a number and a special character; common/repetitive passwords are rejected. Passwords use salted scrypt (`N=32768`, `r=8`, `p=3`) with bounded hashing concurrency. No plaintext passwords are stored. Verification is required before email login.
 - Duplicate signup returns the same generic 202 response as a new request, with no additional account. The email owner chooses their final password on the verification page, so a malicious preregistration cannot preserve a known password. Resend verification is available.
 - Forgot password returns the same generic 202 response for unknown, OAuth-only, disabled and eligible password accounts. It never creates a password on an OAuth-only account.
 - Reset/verification links use random 256-bit tokens, stored as SHA-256 hashes with 30-minute expiry. The token is in a URL fragment; the frontend removes it from the address bar and submits it in a POST body. Single-use consumption is serialized on the credential row. Reset revokes **all** user sessions and requires a fresh login.
@@ -176,3 +176,5 @@ Files changed for this update: backend/devhub/email_auth.py,
 backend/devhub/auth_mail.py, backend/tests/test_email_google_auth.py,
 frontend/src/AuthScreen.tsx, frontend/src/App.tsx, frontend/src/test/auth.test.tsx,
 and this document. Earlier uncommitted startup migration changes are preserved.
+
+Profile/settings routes, avatar storage and the current password policy are documented in [profile-settings.md](profile-settings.md).

@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from devhub import auth, core, github, ai, email_auth, google_auth
+from devhub import auth, core, github, ai, email_auth, google_auth, profile
 from devhub.config import settings
 from devhub.db import engine
 from devhub.http_limits import BodyLimitMiddleware, DemoRateLimitMiddleware
@@ -154,12 +154,13 @@ def create_app() -> FastAPI:
         try:
             with engine.connect() as db:
                 revision = db.scalar(text("SELECT version_num FROM alembic_version"))
-                if revision != "0003_auth":
+                if revision != "0004_profile":
                     raise HTTPException(503, "Database migration required")
         except SQLAlchemyError as exc:
             raise HTTPException(503, "Database unavailable") from exc
         return {"status": "ready"}
 
+    app.include_router(profile.router)
     app.include_router(auth.router)
     app.include_router(email_auth.router)
     app.include_router(google_auth.router)

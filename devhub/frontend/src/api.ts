@@ -5,11 +5,11 @@ export class ApiError extends Error {
 export async function request<T>(path: string, options: { method?: string; body?: unknown; csrf?: string | null; signal?: AbortSignal } = {}): Promise<T> {
   const method = options.method ?? 'GET';
   const headers: Record<string, string> = { Accept: 'application/json' };
-  if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+  if (options.body !== undefined) headers['Content-Type'] = options.body instanceof Blob ? options.body.type : 'application/json';
   if (options.csrf && !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())) headers['X-CSRF-Token'] = options.csrf;
   let response: Response;
   try {
-    response = await fetch(path, { method, credentials: 'same-origin', headers, body: options.body === undefined ? undefined : JSON.stringify(options.body), signal: options.signal });
+    response = await fetch(path, { method, credentials: 'same-origin', headers, body: options.body === undefined ? undefined : (options.body instanceof Blob ? options.body : JSON.stringify(options.body)), signal: options.signal });
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;
     throw new ApiError(0, 'We could not reach DevHub. Check your connection and try again.');

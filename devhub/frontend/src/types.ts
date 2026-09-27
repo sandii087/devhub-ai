@@ -1,5 +1,5 @@
 export type Role = 'owner' | 'admin' | 'member' | 'viewer' | 'maintainer' | 'contributor';
-export type User = { id: string; email: string; display_name: string };
+export type User = { id: string; email: string; display_name: string; avatar_url?: string | null };
 export type Session = { user: User | null; csrf_token: string | null; auth_mode: 'development' | 'github' | 'configured' | 'unconfigured'; providers?: string[]; email_enabled?: boolean; email_delivery?: boolean };
 export type Page<T> = { items: T[]; total: number };
 export type Organization = { id: string; name: string; slug: string; role?: Role; current_user_role?: Role };
@@ -12,3 +12,5 @@ export type Discussion = { id: string; title: string; body: string; version: num
 export type Comment = { id: string; body: string; author_id?: string; created_by?: string; created_at?: string; author?: User };
 export type Installation = { id?: string; installation_id: number; account_login?: string; account?: string; enabled?: boolean; verified?: boolean };
 export type Repository = { id: string; full_name: string; html_url: string; sync_state: string; last_synced_at: string | null; open_issues_count: number | null; default_branch: string | null };
+
+export type Profile = User & { email_verified: boolean; password_enabled: boolean; connected_providers: string[] };

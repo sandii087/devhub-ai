@@ -78,8 +78,8 @@ class TokenInput(BaseModel):
 class ChangePasswordInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     current_password: str = Field(min_length=1, max_length=128)
-    password: str = Field(min_length=15, max_length=128)
-    confirm_password: str = Field(min_length=15, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
+    confirm_password: str = Field(min_length=8, max_length=128)
 
     @model_validator(mode="after")
     def strong_confirmed_password(self):

@@ -6,7 +6,7 @@ import App from '../App';
 import type { Session } from '../types';
 
 const session: Session = { user: null, csrf_token: null, auth_mode: 'configured', providers: ['google', 'github'], email_enabled: true, email_delivery: true };
-const password = 'A secure river lantern passphrase!'; // pragma: allowlist secret -- synthetic fixture
+const password = 'A secure river lantern passphrase1!'; // pragma: allowlist secret -- synthetic fixture
 function reply(data: unknown, status = 200) { return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }); }
 afterEach(() => { vi.unstubAllGlobals(); window.history.replaceState(null, '', '/'); });
 
@@ -106,4 +106,17 @@ it('changes a password with CSRF, confirmation, and logout callback', async () =
   await waitFor(() => expect(changed).toHaveBeenCalled());
   expect(fetcher.mock.calls[0][0]).toBe('/auth/change-password');
   expect(new Headers(fetcher.mock.calls[0][1].headers).get('X-CSRF-Token')).toBe('test-csrf');
+});
+
+it('shows an explicit reset success state with a return to login', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(reply({ detail: 'Password updated. Sign in with your new password' })));
+  render(<AuthScreen session={session} onLogin={vi.fn()} authLink={'#reset-password=' + 'x'.repeat(43)} />);
+  expect(screen.getByText(/8–128 characters/)).toBeVisible();
+  await userEvent.type(screen.getByLabelText('Password', { exact: true }), 'Aa1!aaaa');
+  await userEvent.type(screen.getByLabelText('Confirm password'), 'Aa1!aaaa');
+  await userEvent.click(screen.getByRole('button', { name: 'Reset password' }));
+  expect(await screen.findByRole('heading', { name: 'You’re all set' })).toBeVisible();
+  expect(screen.getByRole('status')).toHaveTextContent('Password updated');
+  await userEvent.click(screen.getByRole('button', { name: 'Back to login' }));
+  expect(screen.getByRole('heading', { name: 'Welcome to DevHub' })).toBeVisible();
 });

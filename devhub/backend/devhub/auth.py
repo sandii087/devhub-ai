@@ -40,6 +40,7 @@ class UserView(BaseModel):
     id: str
     email: str
     display_name: str
+    avatar_url: str | None = None
 
 
 class SessionView(BaseModel):
@@ -176,7 +177,14 @@ def _session_view(user: User | None = None, session: Session | None = None) -> S
     from devhub import auth_mail
 
     return SessionView(
-        user=UserView(id=user.id, email=user.email, display_name=user.display_name) if user else None,
+        user=UserView(
+            id=user.id,
+            email=user.email,
+            display_name=user.display_name,
+            avatar_url=(f"/api/v1/me/avatar?v={user.avatar_version}" if user.avatar_version else None),
+        )
+        if user
+        else None,
         csrf_token=session.csrf_token if session else None,
         auth_mode=auth_mode(),
         providers=(["github"] if _github_configured() else [])

@@ -1,0 +1,33 @@
+import { test, expect } from '@playwright/test';
+
+test('profile settings, avatar upload/removal and navigation work on this device', async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await page.getByLabel('Your name', { exact: true }).fill('Profile Tester');
+  await page.getByLabel('Email address', { exact: true }).fill(`profile-${Date.now()}@example.com`);
+  await page.getByRole('button', { name: 'Enter workspace' }).click();
+  await page.getByRole('button', { name: 'Open profile settings', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Profile & Settings' })).toBeVisible();
+  await page.getByLabel('Display name', { exact: true }).fill('New Profile Name');
+  await page.getByRole('button', { name: 'Save profile', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('Profile saved. Looking good!');
+  await page.getByLabel('Choose profile picture').setInputFiles({ name: 'image.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jD1kAAAAASUVORK5CYII=', 'base64') });
+  await page.getByRole('button', { name: 'Save picture', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('Profile picture updated.');
+  await expect(page.locator('.header-profile img')).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel('Display name', { exact: true })).toHaveValue('New Profile Name');
+  await expect(page.locator('.header-profile img')).toBeVisible();
+  await page.screenshot({ path: `../output/playwright/profile-${testInfo.project.name}.png`, fullPage: true });
+  await page.getByRole('button', { name: 'Remove picture', exact: true }).click();
+  await expect(page.locator('.header-profile img')).toHaveCount(0);
+  await page.getByRole('link', { name: 'Security', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Sign-in & security' })).toBeVisible();
+  await page.getByRole('link', { name: 'Account', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Your DevHub account' })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: 'Sign-in & security' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+});

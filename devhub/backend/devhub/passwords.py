@@ -3,17 +3,23 @@
 import hashlib
 import hmac
 import secrets
+import re
 from threading import BoundedSemaphore
 
 from fastapi import HTTPException
 
 _slots = BoundedSemaphore(2)
-COMMON = {"passwordpassword", "password1234567", "123456789012345", "qwertyuiopasdfgh"}
 
 
 def validate_password(password: str) -> str:
-    if not 15 <= len(password) <= 128 or password.casefold() in COMMON or len(set(password)) < 5:
-        raise ValueError("Use 15–128 characters and avoid common or repetitive passwords")
+    if not (
+        8 <= len(password) <= 128
+        and re.search(r"[A-Z]", password)
+        and re.search(r"[a-z]", password)
+        and re.search(r"[0-9]", password)
+        and re.search(r"[^\w\s]|_", password)
+    ):
+        raise ValueError("Use 8–128 characters with uppercase, lowercase, a number and a special character")
     return password
 
 

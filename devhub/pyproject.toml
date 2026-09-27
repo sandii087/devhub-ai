@@ -19,6 +19,7 @@ dependencies = [
   "PyJWT[crypto]>=2.10,<3",
   "python-dotenv>=1.1,<2",
   "email-validator>=2.2,<3",
+  "Pillow>=12.3,<13",
 ]
 
 [project.optional-dependencies]

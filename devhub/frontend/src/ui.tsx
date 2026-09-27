@@ -13,8 +13,8 @@ export function Empty({ icon, title, children, action }: { icon: ReactNode; titl
   return <div className="empty"><div className="empty-icon">{icon}</div><h3>{title}</h3><p>{children}</p>{action}</div>;
 }
 
-export function Avatar({ name, small = false }: { name: string; small?: boolean }) {
-  return <span className={`avatar ${small ? 'small' : ''}`} aria-label={name}>{name.trim().split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || '?'}</span>;
+export function Avatar({ name, small = false, src }: { name: string; small?: boolean; src?: string | null }) {
+  return <span className={`avatar ${small ? 'small' : ''}`} aria-label={name}>{src ? <img src={src} alt="" /> : name.trim().split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || '?'}</span>;
 }
 
 export function Modal({ title, children, onClose, wide = false }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {

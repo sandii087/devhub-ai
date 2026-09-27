@@ -16,8 +16,8 @@ from devhub.db import get_db
 from devhub.models import User
 
 ORIGIN = "http://localhost:8000"
-PASSWORD = "A unique river lantern passphrase!"  # pragma: allowlist secret
-NEW_PASSWORD = "Another safe mountain lantern phrase!"  # pragma: allowlist secret
+PASSWORD = "A unique river lantern passphrase1!"  # pragma: allowlist secret
+NEW_PASSWORD = "Another safe mountain lantern phrase2!"  # pragma: allowlist secret
 
 
 class CapturedMail(list):
@@ -599,3 +599,71 @@ def test_html_email_uses_production_origin(monkeypatch, purpose, fragment):
         assert "30 minutes" in message[kind]
         assert "localhost" not in message[kind]
     assert "<!doctype html>" in message["html"]
+
+
+@pytest.mark.parametrize("path", ["/auth/reset-password", "/auth/verify-email"])
+@pytest.mark.parametrize("token", ["", "short", "x" * 129, "x" * 43])
+def test_malformed_recovery_tokens(account_client, path, token):
+    client, _ = account_client
+    response = client.post(path, json={"token": token, "password": PASSWORD, "confirm_password": PASSWORD})
+    assert response.status_code in {400, 422}
+    assert client.get("/auth/session").json()["user"] is None
+
+
+def test_eight_character_policy_signup_reset_change(account_client):
+    client, mail = account_client
+    first = "Aa1!aaaa"  # pragma: allowlist secret -- synthetic fixture
+    second = "Bb2@bbbb"  # pragma: allowlist secret -- synthetic fixture
+    assert (
+        client.post(
+            "/auth/signup", json={"email": "person@example.com", "password": first, "display_name": "Person"}
+        ).status_code
+        == 202
+    )
+    assert (
+        client.post("/auth/verify-email", json={"token": mail[-1][1], "password": first}).status_code == 200
+    )
+    session = login(client, first).json()
+    assert (
+        client.post(
+            "/auth/change-password",
+            headers={"X-CSRF-Token": session["csrf_token"]},
+            json={"current_password": first, "password": second, "confirm_password": second},
+        ).status_code
+        == 200
+    )
+    client.post("/auth/forgot-password", json={"email": "person@example.com"})
+    assert (
+        client.post("/auth/reset-password", json={"token": mail[-1][1], "password": first}).status_code == 200
+    )
+    assert login(client, first).status_code == 200
+
+
+def test_weak_reset_password_does_not_consume_token(account_client):
+    client, mail = verified(account_client)
+    client.post("/auth/forgot-password", json={"email": "person@example.com"})
+    token = mail[-1][1]
+    assert (
+        client.post(
+            "/auth/reset-password",
+            json={
+                "token": token,
+                "password": "only lowercase letters",  # pragma: allowlist secret -- invalid test input
+            },
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/auth/reset-password",
+            json={"token": token, "password": NEW_PASSWORD, "confirm_password": PASSWORD},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/auth/reset-password",
+            json={"token": token, "password": NEW_PASSWORD, "confirm_password": NEW_PASSWORD},
+        ).status_code
+        == 200
+    )

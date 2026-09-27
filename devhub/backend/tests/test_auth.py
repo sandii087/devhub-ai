@@ -116,7 +116,7 @@ def test_session_cookie_is_hashed_and_only_profile_is_exposed(auth_client, auth_
     with auth_database() as db:
         stored = db.get(Session, auth._hash(value))
         assert stored is not None and stored.token_hash != value
-    assert set(response.json()["user"]) == {"id", "email", "display_name"}
+    assert set(response.json()["user"]) == {"id", "email", "display_name", "avatar_url"}
     assert auth_client.get("/private").status_code == 200
 
 
