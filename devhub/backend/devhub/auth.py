@@ -385,7 +385,7 @@ def begin_oauth(db, provider, link_session_hash=None):
                 "state": state,
                 "code_challenge": challenge,
                 "code_challenge_method": "S256",
-                **({"response_type": "code", "nonce": nonce, "prompt": "select_account"} if google else {}),
+                **({"response_type": "code", "nonce": nonce} if google else {}),
             }
         )
     )
