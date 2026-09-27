@@ -18,7 +18,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DatabaseSession
 
-from devhub.auth_models import Identity, OIDCFlow, Session
+from devhub.auth_models import Identity, OIDCFlow, PasswordCredential, Session
 from devhub.config import settings
 from devhub.db import get_db
 from devhub.models import User
@@ -474,11 +474,32 @@ def finish_oauth(request, db, flow, issuer, claims):
             db.add(Identity(user_id=user.id, issuer=issuer, subject=claims["sub"]))
             db.flush()
     else:
-        if not identity and db.scalar(select(User.id).where(func.lower(User.email) == email).limit(1)):
-            raise HTTPException(
-                409, "Sign in using your existing method, then connect this provider from your account"
-            )
-        user = _identity_user(db, issuer, claims["sub"], email, claims["name"])
+        matches = (
+            db.scalars(select(User).where(func.lower(User.email) == email).limit(2)).all()
+            if not identity
+            else []
+        )
+        if matches:
+            # Provider callbacks have already verified the incoming email. Only reuse
+            # an account whose matching local email ownership is also verified.
+            user = matches[0]
+            credential = db.get(PasswordCredential, user.id, with_for_update=True)
+            if user.disabled:
+                raise HTTPException(403, "Account unavailable")
+            if (
+                len(matches) != 1
+                or issuer not in {GITHUB_ISSUER, "https://accounts.google.com"}
+                or not credential
+                or not credential.verified
+                or credential.email.casefold() != email
+            ):
+                raise HTTPException(
+                    409, "Sign in using your existing method, then connect this provider from your account"
+                )
+            db.add(Identity(user_id=user.id, issuer=issuer, subject=claims["sub"]))
+            db.flush()
+        else:
+            user = _identity_user(db, issuer, claims["sub"], email, claims["name"])
     response = Response(status_code=303, headers={"Location": "/"})
     _new_session(request, response, db, user)
     response.delete_cookie(

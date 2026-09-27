@@ -336,25 +336,15 @@ def test_google_cancel_state_browser_expiry_and_provider_error(account_client, g
     assert client.get(f"/auth/google/callback?state={state}&code=good").status_code == 400
 
 
-def test_explicit_linking_reuses_existing_account(account_client, google_provider, database):
+def test_verified_email_google_login_reuses_existing_account(account_client, google_provider, database):
     client, _ = verified(account_client)
     session = login(client).json()
+    client.cookies.clear()
     provider, _ = google_provider
-    provider["email"] = "person@example.com"
+    provider["email"] = "PERSON@example.com"
     state = begin_google(client, provider)
     assert (
         client.get(f"/auth/google/callback?state={state}&code=good", follow_redirects=False).status_code
-        == 409
-    )
-    assert client.post("/auth/link/google").status_code == 403
-    response = client.post("/auth/link/google", headers={"X-CSRF-Token": session["csrf_token"]})
-    assert response.status_code == 200
-    query = parse_qs(urlsplit(response.json()["url"]).query)
-    provider["nonce"] = query["nonce"][0]
-    assert (
-        client.get(
-            f"/auth/google/callback?state={query['state'][0]}&code=good", follow_redirects=False
-        ).status_code
         == 303
     )
     assert client.get("/auth/session").json()["user"]["id"] == session["user"]["id"]
@@ -362,6 +352,52 @@ def test_explicit_linking_reuses_existing_account(account_client, google_provide
         assert (
             db.scalar(select(func.count()).select_from(User).where(User.email == "person@example.com")) == 1
         )
+        assert (
+            db.scalar(select(Identity).where(Identity.user_id == session["user"]["id"])).issuer
+            == "https://accounts.google.com"
+        )
+
+
+@pytest.mark.parametrize("issuer", ["https://github.com", "https://accounts.google.com"])
+@pytest.mark.parametrize("state", ["verified", "unverified", "disabled"])
+def test_email_linking_requires_verified_active_account(account_client, database, issuer, state):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    client, _ = verified(account_client)
+    with database() as db:
+        credential = db.scalar(
+            select(PasswordCredential).where(PasswordCredential.email == "person@example.com")
+        )
+        user = db.get(User, credential.user_id)
+        credential.verified = state != "unverified"
+        user.disabled = state == "disabled"
+        db.flush()
+        claims = {"sub": "new-provider-subject", "email": "PERSON@example.com", "name": "Provider Name"}
+        request = Request(
+            {"type": "http", "headers": [], "scheme": "http", "server": ("localhost", 8000), "path": "/"}
+        )
+        flow = SimpleNamespace(link_session_hash=None)
+        if state != "verified":
+            with pytest.raises(HTTPException) as error:
+                auth.finish_oauth(request, db, flow, issuer, claims)
+            assert error.value.status_code == (403 if state == "disabled" else 409)
+            assert (
+                db.scalar(
+                    select(Identity).where(Identity.issuer == issuer, Identity.subject == claims["sub"])
+                )
+                is None
+            )
+        else:
+            assert auth.finish_oauth(request, db, flow, issuer, claims).status_code == 303
+            assert (
+                db.scalar(
+                    select(Identity).where(Identity.issuer == issuer, Identity.subject == claims["sub"])
+                ).user_id
+                == user.id
+            )
+            assert user.display_name == "Person"
 
 
 def test_link_rejects_swapped_session_and_old_login(account_client, google_provider, database):
