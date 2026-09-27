@@ -7,7 +7,7 @@ from time import monotonic
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.staticfiles import StaticFiles
@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from devhub import auth, core, github, ai
+from devhub import auth, core, github, ai, email_auth, google_auth
 from devhub.config import settings
 from devhub.db import engine
 from devhub.http_limits import BodyLimitMiddleware, DemoRateLimitMiddleware
@@ -56,7 +56,7 @@ def create_app() -> FastAPI:
         allowed_hosts.append(settings.render_external_hostname)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
     app.add_middleware(BodyLimitMiddleware)
-    if settings.frontend_dist:
+    if settings.frontend_dist or settings.environment == "production":
         app.add_middleware(DemoRateLimitMiddleware)
 
     @app.middleware("http")
@@ -102,6 +102,12 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request, exc: HTTPException):
+        if request.url.path in {
+            "/auth/callback",
+            "/auth/google/callback",
+        } and "text/html" in request.headers.get("accept", ""):
+            error = "link" if exc.status_code == 409 else "retry"
+            return Response(status_code=303, headers={"Location": "/#auth-error=" + error})
         detail = exc.detail.get("detail", "Request failed") if isinstance(exc.detail, dict) else exc.detail
         code = (
             exc.detail.get("code", f"http_{exc.status_code}")
@@ -148,13 +154,15 @@ def create_app() -> FastAPI:
         try:
             with engine.connect() as db:
                 revision = db.scalar(text("SELECT version_num FROM alembic_version"))
-                if revision != "0002_ai":
+                if revision != "0003_auth":
                     raise HTTPException(503, "Database migration required")
         except SQLAlchemyError as exc:
             raise HTTPException(503, "Database unavailable") from exc
         return {"status": "ready"}
 
     app.include_router(auth.router)
+    app.include_router(email_auth.router)
+    app.include_router(google_auth.router)
     app.include_router(core.router)
     app.include_router(github.router)
     app.include_router(ai.router)

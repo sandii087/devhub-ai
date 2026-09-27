@@ -74,3 +74,19 @@ def test_demo_limit_does_not_block_readiness():
     limited = client.post("/test")
     assert limited.status_code == 429 and int(limited.headers["Retry-After"]) > 0
     assert client.get("/health/live").status_code == 200
+
+
+def test_google_endpoints_share_oauth_rate_limit():
+    from fastapi import FastAPI
+    from devhub.http_limits import DemoRateLimitMiddleware
+
+    app = FastAPI()
+    app.add_middleware(DemoRateLimitMiddleware, login_limit=1)
+
+    @app.get("/auth/google/login")
+    def login():
+        return {"ok": True}
+
+    client = TestClient(app)
+    assert client.get("/auth/google/login").status_code == 200
+    assert client.get("/auth/google/callback").status_code == 429

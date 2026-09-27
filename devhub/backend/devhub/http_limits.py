@@ -55,7 +55,14 @@ class DemoRateLimitMiddleware:
         path = scope.get("path", "")
         bucket = (
             "login"
-            if path in {"/auth/login", "/auth/callback", "/auth/dev-login"}
+            if path
+            in {
+                "/auth/login",
+                "/auth/callback",
+                "/auth/google/login",
+                "/auth/google/callback",
+                "/auth/dev-login",
+            }
             else ("mutation" if scope.get("method") not in {"GET", "HEAD", "OPTIONS"} else None)
         )
         if bucket:

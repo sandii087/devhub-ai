@@ -31,6 +31,11 @@ services:
       DATABASE_URL: postgresql+psycopg://devhub_app:local-only-app@database/devhub
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      EMAIL_AUTH_ENABLED: ${EMAIL_AUTH_ENABLED:-false}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
       GITHUB_PRIVATE_KEY: ${GITHUB_PRIVATE_KEY:-}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
@@ -52,6 +57,8 @@ services:
       DATABASE_URL: postgresql+psycopg://devhub_worker:local-only-worker@database/devhub
       OPENAI_API_KEY: ""
       GITHUB_CLIENT_SECRET: ""
+      GOOGLE_CLIENT_SECRET: ""
+      RESEND_API_KEY: ""
     command: [python, -m, devhub.worker]
     healthcheck: {disable: true}
     depends_on:

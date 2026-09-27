@@ -14,7 +14,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 import httpx
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, TypeAdapter, ValidationError
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DatabaseSession
 
@@ -45,7 +45,10 @@ class UserView(BaseModel):
 class SessionView(BaseModel):
     user: UserView | None
     csrf_token: str | None
-    auth_mode: Literal["development", "github", "unconfigured"]
+    auth_mode: Literal["development", "github", "configured", "unconfigured"]
+    providers: list[str] = Field(default_factory=list)
+    email_enabled: bool = False
+    email_delivery: bool = False
 
 
 class DevelopmentLogin(BaseModel):
@@ -91,11 +94,15 @@ def _github_configured() -> bool:
     return bool(settings.github_client_id.strip() and settings.github_client_secret.strip())
 
 
-def auth_mode() -> Literal["development", "github", "unconfigured"]:
+def auth_mode() -> Literal["development", "github", "configured", "unconfigured"]:
     if _development_enabled():
         return "development"
     if _github_configured():
         return "github"
+    if (
+        settings.google_client_id.strip() and settings.google_client_secret.strip()
+    ) or settings.email_auth_enabled:
+        return "configured"
     return "unconfigured"
 
 
@@ -166,10 +173,16 @@ def require_user(request: Request, db: DatabaseSession = Depends(get_db)) -> Use
 
 
 def _session_view(user: User | None = None, session: Session | None = None) -> SessionView:
+    from devhub import auth_mail
+
     return SessionView(
         user=UserView(id=user.id, email=user.email, display_name=user.display_name) if user else None,
         csrf_token=session.csrf_token if session else None,
         auth_mode=auth_mode(),
+        providers=(["github"] if _github_configured() else [])
+        + (["google"] if settings.google_client_id and settings.google_client_secret else []),
+        email_enabled=settings.email_auth_enabled,
+        email_delivery=auth_mail.configured(),
     )
 
 
@@ -344,25 +357,35 @@ def _exchange_code(code: str, verifier: str) -> dict:
 
 @router.get("/login")
 def github_login(request: Request, db: DatabaseSession = Depends(get_db)) -> Response:
-    if not _github_configured():
-        raise HTTPException(503, "GitHub sign-in is not configured")
+    return begin_oauth(db, "github")
+
+
+def begin_oauth(db, provider, link_session_hash=None):
+    google = provider == "google"
+    client_id = settings.google_client_id if google else settings.github_client_id
+    client_secret = settings.google_client_secret if google else settings.github_client_secret
+    if not client_id or not client_secret:
+        raise HTTPException(503, "Sign-in provider is not configured")
     state, verifier, browser = (secrets.token_urlsafe(32) for _ in range(3))
+    nonce = secrets.token_urlsafe(32) if google else "github-oauth"
     challenge = (
         base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
         .rstrip(b"=")
         .decode("ascii")
     )
     url = (
-        GITHUB_AUTHORIZE
+        ("https://accounts.google.com/o/oauth2/v2/auth" if google else GITHUB_AUTHORIZE)
         + "?"
         + urlencode(
             {
-                "client_id": settings.github_client_id,
-                "redirect_uri": settings.app_origin.rstrip("/") + "/auth/callback",
-                "scope": "read:user user:email",
+                "client_id": client_id,
+                "redirect_uri": settings.app_origin.rstrip("/")
+                + ("/auth/google/callback" if google else "/auth/callback"),
+                "scope": "openid email profile" if google else "read:user user:email",
                 "state": state,
                 "code_challenge": challenge,
                 "code_challenge_method": "S256",
+                **({"response_type": "code", "nonce": nonce, "prompt": "select_account"} if google else {}),
             }
         )
     )
@@ -370,7 +393,8 @@ def github_login(request: Request, db: DatabaseSession = Depends(get_db)) -> Res
         OIDCFlow(
             state_hash=_hash(state),
             # Retain the existing schema. This marker rejects pre-switch OIDC attempts.
-            nonce="github-oauth",
+            nonce="google:" + nonce if google else nonce,
+            link_session_hash=link_session_hash,
             code_verifier=verifier,
             browser_hash=_hash(browser),
             expires_at=_now() + FLOW_LIFETIME,
@@ -393,6 +417,17 @@ def github_login(request: Request, db: DatabaseSession = Depends(get_db)) -> Res
 
 @router.get("/callback")
 def github_callback(request: Request, db: DatabaseSession = Depends(get_db)) -> Response:
+    flow, code = consume_oauth(request, db, "github")
+    try:
+        claims = _exchange_code(code, flow.code_verifier)
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, "Identity provider unavailable; restart sign-in") from exc
+    except (ValueError, KeyError, ValidationError) as exc:
+        raise HTTPException(400, "Invalid sign-in response; restart sign-in") from exc
+    return finish_oauth(request, db, flow, GITHUB_ISSUER, claims)
+
+
+def consume_oauth(request, db, provider):
     state = request.query_params.get("state", "")
     browser = request.cookies.get(_flow_cookie_name(), "")
     if not state or not browser or len(state) > 128 or len(browser) > 128:
@@ -407,24 +442,64 @@ def github_callback(request: Request, db: DatabaseSession = Depends(get_db)) -> 
             OIDCFlow.browser_hash == _hash(browser),
             OIDCFlow.expires_at > _now(),
         )
-        .returning(OIDCFlow.nonce, OIDCFlow.code_verifier)
+        .returning(OIDCFlow.nonce, OIDCFlow.code_verifier, OIDCFlow.link_session_hash)
     ).first()
     db.commit()
-    if not flow or flow.nonce != "github-oauth":
+    if not flow or (
+        flow.nonce != "github-oauth" if provider == "github" else not flow.nonce.startswith("google:")
+    ):
         raise HTTPException(400, "Invalid or expired sign-in attempt")
     code = request.query_params.get("code", "")
     if request.query_params.get("error") or not code or len(code) > 4096:
         raise HTTPException(400, "Sign-in was not completed")
-    try:
-        claims = _exchange_code(code, flow.code_verifier)
-    except httpx.HTTPError as exc:
-        raise HTTPException(503, "Identity provider unavailable; restart sign-in") from exc
-    except (ValueError, KeyError, ValidationError) as exc:
-        raise HTTPException(400, "Invalid sign-in response; restart sign-in") from exc
-    user = _identity_user(db, GITHUB_ISSUER, claims["sub"], claims["email"], claims["name"])
+    return flow, code
+
+
+def finish_oauth(request, db, flow, issuer, claims):
+    from devhub.email_auth import lock_email
+
+    email = claims["email"].casefold()
+    lock_email(db, email)
+    identity = db.scalar(select(Identity).where(Identity.issuer == issuer, Identity.subject == claims["sub"]))
+    if flow.link_session_hash:
+        pair = _get_session(request, db)
+        if not pair or not hmac.compare_digest(pair[0].token_hash, flow.link_session_hash):
+            raise HTTPException(403, "Sign in again before linking this provider")
+        if pair[0].created_at < _now() - timedelta(minutes=10):
+            raise HTTPException(403, "Sign in again before linking this provider")
+        user = pair[1]
+        if identity and identity.user_id != user.id:
+            raise HTTPException(409, "This provider is already connected to another account")
+        if not identity:
+            db.add(Identity(user_id=user.id, issuer=issuer, subject=claims["sub"]))
+            db.flush()
+    else:
+        if not identity and db.scalar(select(User.id).where(func.lower(User.email) == email).limit(1)):
+            raise HTTPException(
+                409, "Sign in using your existing method, then connect this provider from your account"
+            )
+        user = _identity_user(db, issuer, claims["sub"], email, claims["name"])
     response = Response(status_code=303, headers={"Location": "/"})
     _new_session(request, response, db, user)
     response.delete_cookie(
         _flow_cookie_name(), path="/", secure=_secure_cookie(), httponly=True, samesite="lax"
     )
+    return response
+
+
+@router.post("/link/{provider}")
+def link_provider(
+    provider: Literal["github", "google"],
+    request: Request,
+    user: User = Depends(require_user),
+    db: DatabaseSession = Depends(get_db),
+):
+    if request.state.auth_session.created_at < _now() - timedelta(minutes=5):
+        raise HTTPException(403, "Sign out and sign in again before connecting a provider")
+    redirect = begin_oauth(db, provider, request.state.auth_session.token_hash)
+    response = Response(
+        content=json.dumps({"url": redirect.headers["location"]}), media_type="application/json"
+    )
+    response.headers.append("set-cookie", redirect.headers["set-cookie"])
+    _private_response(response)
     return response

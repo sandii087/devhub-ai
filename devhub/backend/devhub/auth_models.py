@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import Boolean, Integer, DateTime, ForeignKey, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from devhub.db import Base
@@ -28,6 +28,7 @@ class OIDCFlow(Base):
     nonce: Mapped[str] = mapped_column(String(128))
     code_verifier: Mapped[str] = mapped_column(String(128))
     browser_hash: Mapped[str] = mapped_column(String(64))
+    link_session_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
@@ -39,3 +40,26 @@ class Identity(Base):
     issuer: Mapped[str] = mapped_column(Text)
     subject: Mapped[str] = mapped_column(Text)
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id"), index=True)
+
+
+class PasswordCredential(Base):
+    __tablename__ = "password_credentials"
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id"), primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True)
+    password_hash: Mapped[str] = mapped_column(Text)
+    verified: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class EmailToken(Base):
+    __tablename__ = "email_tokens"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), ForeignKey("users.id"), index=True)
+    purpose: Mapped[str] = mapped_column(String(20))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class AuthThrottle(Base):
+    __tablename__ = "auth_throttles"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    count: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

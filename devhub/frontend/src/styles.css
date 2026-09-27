@@ -9,3 +9,12 @@
 
 .sidebar>*{flex-shrink:0}
 @media(max-width:700px){.sidebar-note{margin:20px 3px}.sidebar>.brand{margin-bottom:24px}}
+/* Authentication shares the workspace palette and scales down to mobile screens. */
+.auth-providers { display: grid; gap: 10px; margin-top: 24px; }
+.auth-divider { display: flex; align-items: center; gap: 12px; margin: 22px 0; color: #67738b; font-size: 13px; }
+.auth-divider::before, .auth-divider::after { content: ''; flex: 1; height: 1px; background: #e4e8f0; }
+.auth-navigation { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 20px; }
+.auth-navigation button, .account-connections button { border: 0; background: transparent; color: #6254d9; font-size: 13px; cursor: pointer; padding: 4px 0; }
+.auth-notice { background: #eff9f4; color: #216341; padding: 14px; border-radius: 10px; line-height: 1.5; }
+.account-connections { display: grid; gap: 6px; margin-bottom: 12px; }
+.account-connections button { color: #c5bfff; text-align: left; }

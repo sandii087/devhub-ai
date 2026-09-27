@@ -14,7 +14,7 @@ describe('Workspace boundaries', () => {
   it('renders GitHub sign-in without a development bypass', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(respond({ user: null, csrf_token: null, auth_mode: 'github' })));
     render(<App />);
-    expect(await screen.findByRole('link', { name: /sign in with GitHub/i })).toHaveAttribute('href', '/auth/login');
+    expect(await screen.findByRole('link', { name: /continue with GitHub/i })).toHaveAttribute('href', '/auth/login');
     expect(screen.queryByRole('textbox', { name: /email address/i })).not.toBeInTheDocument();
   });
   it('sends the CSRF token only on mutations and never as a URL parameter', async () => {

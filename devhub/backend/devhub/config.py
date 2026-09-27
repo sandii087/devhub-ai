@@ -29,6 +29,15 @@ class Settings:
     github_client_secret: str = field(
         default_factory=lambda: os.getenv("GITHUB_CLIENT_SECRET", ""), repr=False
     )
+    google_client_id: str = field(default_factory=lambda: os.getenv("GOOGLE_CLIENT_ID", ""))
+    google_client_secret: str = field(
+        default_factory=lambda: os.getenv("GOOGLE_CLIENT_SECRET", ""), repr=False
+    )
+    email_auth_enabled: bool = field(
+        default_factory=lambda: os.getenv("EMAIL_AUTH_ENABLED", "false").lower() == "true"
+    )
+    resend_api_key: str = field(default_factory=lambda: os.getenv("RESEND_API_KEY", ""), repr=False)
+    email_from: str = field(default_factory=lambda: os.getenv("EMAIL_FROM", ""))
     github_app_id: str = field(default_factory=lambda: os.getenv("GITHUB_APP_ID", ""))
     github_private_key: str = field(
         default_factory=lambda: os.getenv("GITHUB_PRIVATE_KEY", "").replace("\\n", "\n")

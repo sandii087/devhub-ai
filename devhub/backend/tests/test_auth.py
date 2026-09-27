@@ -94,7 +94,14 @@ def login(client):
 
 def test_session_cookie_is_hashed_and_only_profile_is_exposed(auth_client, auth_database):
     anonymous = auth_client.get("/auth/session")
-    assert anonymous.json() == {"user": None, "csrf_token": None, "auth_mode": "development"}
+    assert anonymous.json() == {
+        "user": None,
+        "csrf_token": None,
+        "auth_mode": "development",
+        "providers": ["github"],
+        "email_enabled": False,
+        "email_delivery": False,
+    }
     assert anonymous.headers["cache-control"] == "no-store"
     response = auth_client.post(
         "/auth/dev-login",
@@ -439,16 +446,25 @@ def test_no_verified_primary_email_rejected(auth_client, auth_database, github_t
 
 
 def test_github_does_not_merge_by_email(auth_client, github_transport):
-    local_id = login(auth_client)["user"]["id"]
+    local = login(auth_client)
+    local_id = local["user"]["id"]
     responses, _ = github_transport
     responses[auth.GITHUB_EMAILS] = [{"email": "developer@example.com", "primary": True, "verified": True}]
     responses[auth.GITHUB_USER]["name"] = None
     state = begin_github(auth_client)["state"][0]
     assert (
+        auth_client.get(f"/auth/callback?state={state}&code=valid", follow_redirects=False).status_code == 409
+    )
+    connected = auth_client.post(
+        "/auth/link/github", headers={"Origin": ORIGIN, "X-CSRF-Token": local["csrf_token"]}
+    )
+    assert connected.status_code == 200
+    state = parse_qs(urlsplit(connected.json()["url"]).query)["state"][0]
+    assert (
         auth_client.get(f"/auth/callback?state={state}&code=valid", follow_redirects=False).status_code == 303
     )
     user = auth_client.get("/auth/session").json()["user"]
-    assert user["id"] != local_id and user["display_name"] == "octocat"
+    assert user["id"] == local_id
 
 
 def test_missing_credentials_disable_login(auth_client, auth_settings, monkeypatch, github_transport):
