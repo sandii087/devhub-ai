@@ -70,7 +70,7 @@ def create_app() -> FastAPI:
             try:
                 response = await call_next(request)
             except Exception as exc:
-                log.error(
+                log.exception(
                     "Unhandled request failure type=%s request_id=%s",
                     type(exc).__name__,
                     request.state.request_id,
