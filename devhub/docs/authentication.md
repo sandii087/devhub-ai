@@ -119,3 +119,60 @@ Paths relative to `devhub/`:
 - Configuration and documentation: `.env.example`, `.secrets.baseline` (existing fixture line metadata only), `compose.yaml`, `scripts/serve_free.py` (remove new auth secrets from worker environment), `README.md`, `docs/security.md`, and this guide.
 
 Local verification: 103 backend tests, 11 frontend tests, production frontend build, migrated-schema comparison, Ruff lint/format, Python compilation, secret scan including new files, and frontend production dependency audit passed. Existing desktop/mobile workspace browser journeys passed. Separate real local browser journeys covered signup, verification, login, logout, forgot/reset and replacement-password login on desktop/mobile with private synthetic email capture. Google token verification was tested with signed mock JWTs, not a real Google account. Live OAuth credentials, actual email delivery, and production migration/deployment remain operator rollout steps.
+
+## Email/password completion update
+
+Signup now collects First Name and Last Name, storing their combined value in the
+existing users.display_name column. Existing display_name clients remain compatible.
+The UI requires password confirmation; the API rejects supplied mismatches.
+Verification still asks the email owner to choose the final password, preserving
+protection against malicious preregistration. No phone or SMS fields were added.
+
+The sidebar offers Change password for email-enabled deployments.
+POST /auth/change-password requires the existing session, CSRF token, exact Origin,
+current password, and a strong new password plus matching confirmation. Verified
+password accounts only are eligible. It locks the credential, hashes the replacement,
+revokes every user session and deletes outstanding email tokens. The UI returns to
+login. OAuth-only accounts continue using their provider; both OAuth implementations
+and safe linking rules are unchanged.
+
+Resend emails now contain professional HTML plus plain text. Both link formats use
+APP_ORIGIN and token fragments. Sending remains best-effort with safe generic failure
+logs; users can request a replacement. No welcome email or paid service was added.
+
+### Deployment steps for this update
+
+1. Review, commit and push the approved diff to the branch used by the existing
+   Render service. This update has not been committed or pushed.
+2. Production is reported to already be at 0003_auth. No new migration, table,
+   ownership grant or privilege change is needed. Startup should perform a no-op
+   upgrade and verify the schema. Do not stamp revisions.
+3. Keep DATABASE_URL and any WORKER_DATABASE_URL unchanged. Configure the existing
+   backend environment variables: EMAIL_AUTH_ENABLED=true, RESEND_API_KEY,
+   EMAIL_FROM, APP_ORIGIN=https://devhub-ai-z6gw.onrender.com,
+   ENVIRONMENT=production, DEV_AUTH_ENABLED=false. Preserve GOOGLE_CLIENT_ID,
+   GOOGLE_CLIENT_SECRET, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET. Keys and secrets
+   belong only in Render. No new variable names are needed in .env.example.
+4. Verify the existing sender/domain in Resend and ensure it can send to real
+   recipients. Do not enable paid overages. Google and GitHub callback paths remain
+   /auth/google/callback and /auth/callback under the production origin.
+5. Rebuild/deploy the existing Docker service. Inspect migration startup logs,
+   require HTTP 200 from /health/ready, and check /auth/session for email_enabled,
+   email_delivery and provider availability. Flags alone do not prove delivery.
+6. Sign up with a real inbox. Test verification email delivery, production link,
+   login before/after verification, duplicate signup, resend, expired/reused tokens,
+   forgot/reset, and logout. Old passwords and sessions must fail after reset.
+7. Log in and test Change password: incorrect current password, mismatched
+   confirmation, then success. Check another device is signed out. Test both OAuth
+   providers again, including cancellation and same-email linking behavior.
+
+Local tests use actual isolated PostgreSQL and captured email transport. Adapter
+tests validate production-origin HTML/plain-text Resend payloads with mock HTTP.
+No actual emails or provider OAuth requests are sent by tests. Production environment
+values, delivery, OAuth and health still need live verification. Same-origin frontend
+requests preserve the existing Origin/CSRF policy; no CORS relaxation was added.
+
+Files changed for this update: backend/devhub/email_auth.py,
+backend/devhub/auth_mail.py, backend/tests/test_email_google_auth.py,
+frontend/src/AuthScreen.tsx, frontend/src/App.tsx, frontend/src/test/auth.test.tsx,
+and this document. Earlier uncommitted startup migration changes are preserved.

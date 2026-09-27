@@ -16,4 +16,5 @@ RUN pip install --no-cache-dir --no-deps . && useradd --uid 10001 --create-home 
 COPY --from=frontend /build/dist ./frontend/dist
 USER 10001
 EXPOSE 10000
+ENTRYPOINT ["python", "/app/scripts/container_start.py"]
 CMD ["python", "scripts/serve_free.py"]

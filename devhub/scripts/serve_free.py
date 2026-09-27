@@ -1,6 +1,6 @@
 """Supervise the web API and an optional worker in a single sleeping free instance.
 
-Migrations run separately with an owner credential. No secrets are logged.
+The Docker entrypoint runs migrations before this supervisor. No secrets are logged.
 """
 
 import os

@@ -4,7 +4,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session as DatabaseSession
@@ -32,7 +32,22 @@ class LoginInput(EmailInput):
 
 
 class SignupInput(LoginInput):
-    display_name: str = Field(min_length=1, max_length=100)
+    display_name: str | None = Field(default=None, min_length=1, max_length=100)
+    first_name: str | None = Field(default=None, min_length=1, max_length=49)
+    last_name: str | None = Field(default=None, min_length=1, max_length=50)
+    confirm_password: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def signup_fields(self):
+        if self.first_name is not None or self.last_name is not None:
+            if not (self.first_name or "").strip() or not (self.last_name or "").strip():
+                raise ValueError("First and last name are required")
+            self.display_name = f"{self.first_name.strip()} {self.last_name.strip()}"
+        if not self.display_name:
+            raise ValueError("Name is required")
+        if self.confirm_password is not None and self.password != self.confirm_password:
+            raise ValueError("Passwords do not match")
+        return self
 
     @field_validator("password")
     @classmethod
@@ -42,7 +57,7 @@ class SignupInput(LoginInput):
     @field_validator("display_name")
     @classmethod
     def name(cls, value):
-        if not value.strip():
+        if value is None or not value.strip():
             raise ValueError("Name is required")
         return value.strip()
 
@@ -51,6 +66,27 @@ class TokenInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     token: str = Field(min_length=32, max_length=128)
     password: str = Field(min_length=1, max_length=128)
+    confirm_password: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def confirmation(self):
+        if self.confirm_password is not None and self.password != self.confirm_password:
+            raise ValueError("Passwords do not match")
+        return self
+
+
+class ChangePasswordInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    current_password: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=15, max_length=128)
+    confirm_password: str = Field(min_length=15, max_length=128)
+
+    @model_validator(mode="after")
+    def strong_confirmed_password(self):
+        validate_password(self.password)
+        if self.password != self.confirm_password:
+            raise ValueError("Passwords do not match")
+        return self
 
 
 def lock_email(db, email):
@@ -235,3 +271,29 @@ def verify(payload: TokenInput, request: Request, db: DatabaseSession = Depends(
 @router.post("/reset-password")
 def reset(payload: TokenInput, request: Request, db: DatabaseSession = Depends(get_db)):
     return consume(payload, request, db, "reset")
+
+
+@router.post("/change-password")
+def change_password(
+    payload: ChangePasswordInput,
+    request: Request,
+    response: Response,
+    db: DatabaseSession = Depends(get_db),
+    user: User = Depends(auth.require_user),
+):
+    guard(request, db, "change-password", user.id)
+    credential = db.get(PasswordCredential, user.id, with_for_update=True)
+    valid = verify_password(payload.current_password, credential.password_hash if credential else None)
+    if not valid or not credential or not credential.verified:
+        raise HTTPException(400, "Unable to change password. Check your current password")
+    # A reset/another change may have revoked this session while waiting for the lock.
+    db.refresh(request.state.auth_session)
+    if request.state.auth_session.revoked_at is not None:
+        raise HTTPException(401, "Authentication required")
+    credential.password_hash = hash_password(payload.password)
+    db.execute(update(Session).where(Session.user_id == user.id).values(revoked_at=auth._now()))
+    db.execute(delete(EmailToken).where(EmailToken.user_id == user.id))
+    response.delete_cookie(
+        auth._cookie_name(), path="/", secure=auth._secure_cookie(), httponly=True, samesite="lax"
+    )
+    return {"detail": "Password changed. Sign in again on all devices"}

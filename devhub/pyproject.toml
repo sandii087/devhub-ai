@@ -29,7 +29,7 @@ local-postgres = ["pgserver>=0.1.4,<0.2"]
 where = ["backend"]
 
 [tool.pytest.ini_options]
-testpaths = ["backend/tests"]
+testpaths = ["backend/tests", "scripts/tests"]
 pythonpath = ["backend"]
 addopts = "-ra"
 

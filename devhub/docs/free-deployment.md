@@ -49,3 +49,51 @@ Render also supplies `RENDER_EXTERNAL_HOSTNAME`. The backend allows that exact s
 The application boundary is `AIProvider.generate(kind, prompt, context)`. `OpenAIResponsesProvider` retains the real Responses API implementation. Missing key or model fails closed before opening an HTTP client; the UI reports the provider unavailable and disables generation. No fake output or alternate AI implementation exists. Core collaboration is independent of provider availability.
 
 Only after explicit approval for API charges, set the key and a selected model privately in Render, restart the service, and opt in each project. Existing authorization, context consent, idempotency, quotas, timeout, bounded output and plain-text rendering remain in force. Activation requires real provider smoke tests at that time.
+
+## Automatic migrations on Render Free
+
+`Dockerfile.free` now uses `scripts/container_start.py` as an exec-form ENTRYPOINT.
+It runs Alembic `upgrade head` using `/app/backend/alembic.ini` and the unchanged
+`DATABASE_URL`, then verifies `oidc_flows.link_session_hash` before executing CMD.
+Render's Docker Command overrides CMD, so custom Uvicorn commands still use this
+migration gate. The final image copies both backend/migrations and scripts. No
+Shell, Pre-Deploy Command, build-time database connection, or stamp is used.
+
+Concurrent migrations serialize with a transaction-scoped PostgreSQL advisory
+lock and a 60-second lock wait timeout. Errors roll back and stop startup. Logs
+show start/completion or failure with SQLSTATE, never exception messages or
+connection strings. An explicit DATABASE_URL is mandatory; neither the local
+fallback nor WORKER_DATABASE_URL is used. Already-current databases undergo a
+no-op upgrade and column verification. Incorrectly stamped schemas fail closed.
+
+### Production ownership prerequisite
+
+0003_auth already contains the required ALTER; no duplicate migration is needed.
+PostgreSQL requires ownership of oidc_flows (or authorized access to its owner
+role) to ALTER it, CREATE permission on its schema for new tables, and writes to
+alembic_version. Ordinary table UPDATE grants do not authorize ALTER.
+provision_roles.py intentionally gives devhub_app only SELECT on alembic_version
+and no ownership. Pending migrations under that runtime role fail with SQLSTATE
+42501; a successful no-op at head does not require those additional privileges.
+
+The secure production action is for the existing schema owner to run upgrade head
+through a trusted external migration runner against the **same production database**.
+No runtime privilege or password change is recommended. If objects have different
+owners, a database administrator must authorize the dedicated migration role to
+act as those owners, and ensure schema CREATE and version-table write access.
+Do not grant that ownership/membership to devhub_app. The migration grants the new
+authentication tables' runtime DML permissions to devhub_app when it exists.
+
+Using the identical restricted credential for both arbitrary pending DDL and web
+requests is incompatible with the existing least-privilege design. Automatic
+pending upgrades require separately authorized migration credentials or an external
+runner; this patch does not introduce or modify credentials. Do not replace the
+web DATABASE_URL with an owner URL: production rejects owners and BYPASSRLS roles.
+After the owner applies the migration, this startup gate passes with the unchanged
+restricted URL. The dedicated Docker/Compose release path still uses its separate
+owner migration runner; this change targets the Render Free image only.
+
+Rebuild the image to include the entrypoint. Completion requires verification of
+production revision 0003_auth, SELECT link_session_hash FROM oidc_flows LIMIT 0,
+HTTP 200 from /health/ready, and a real login test. Local/offline checks do not
+prove the production database was migrated.

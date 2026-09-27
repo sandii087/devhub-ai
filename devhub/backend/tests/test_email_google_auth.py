@@ -455,3 +455,111 @@ def test_google_only_configuration_does_not_require_oidc_or_github(account_clien
     )
     result = client.get("/auth/session").json()
     assert result["providers"] == ["google"] and result["auth_mode"] == "configured"
+
+
+def test_signup_split_names_and_confirmation(account_client, database):
+    client, mail = account_client
+    payload = {
+        "first_name": " Ada ",
+        "last_name": "Lovelace",
+        "email": "ada@example.com",
+        "password": PASSWORD,
+        "confirm_password": NEW_PASSWORD,
+    }
+    assert client.post("/auth/signup", json=payload).status_code == 422
+    payload["confirm_password"] = PASSWORD
+    assert client.post("/auth/signup", json=payload).status_code == 202
+    with database() as db:
+        assert db.scalar(select(User).where(User.email == "ada@example.com")).display_name == "Ada Lovelace"
+    assert len(mail) == 1
+    payload["first_name"] = " "
+    assert client.post("/auth/signup", json=payload).status_code == 422
+
+
+def test_expired_verification_and_already_verified_resend(account_client, database):
+    client, mail = account_client
+    signup(client)
+    token = mail[-1][1]
+    with database() as db:
+        db.execute(update(EmailToken).values(expires_at=auth._now() - timedelta(seconds=1)))
+        db.commit()
+    assert client.post("/auth/verify-email", json={"token": token, "password": PASSWORD}).status_code == 400
+    assert client.post("/auth/resend-verification", json={"email": "person@example.com"}).status_code == 202
+    assert (
+        client.post("/auth/verify-email", json={"token": mail[-1][1], "password": PASSWORD}).status_code
+        == 200
+    )
+    count = len(mail)
+    assert client.post("/auth/resend-verification", json={"email": "person@example.com"}).status_code == 202
+    assert len(mail) == count
+
+
+def test_change_password_requires_auth_csrf_current_and_revokes(account_client, database):
+    client, mail = verified(account_client)
+    payload = {"current_password": PASSWORD, "password": NEW_PASSWORD, "confirm_password": NEW_PASSWORD}
+    assert client.post("/auth/change-password", json=payload).status_code == 401
+    session = login(client).json()
+    assert client.post("/auth/change-password", json=payload).status_code == 403
+    headers = {"X-CSRF-Token": session["csrf_token"]}
+    assert (
+        client.post(
+            "/auth/change-password",
+            json={**payload, "current_password": "wrong"},  # pragma: allowlist secret -- invalid test input
+            headers=headers,
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/auth/change-password", json={**payload, "confirm_password": PASSWORD}, headers=headers
+        ).status_code
+        == 422
+    )
+    client.post("/auth/forgot-password", json={"email": "person@example.com"})
+    token = mail[-1][1]
+    assert client.post("/auth/change-password", json=payload, headers=headers).status_code == 200
+    assert client.get("/auth/session").json()["user"] is None
+    with database() as db:
+        assert db.get(EmailToken, auth._hash(token)) is None
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(Session)
+                .where(Session.revoked_at.is_(None), Session.user_id == session["user"]["id"])
+            )
+            == 0
+        )
+    assert login(client).status_code == 401
+    assert login(client, NEW_PASSWORD).status_code == 200
+
+
+def test_email_requests_are_rate_limited(account_client):
+    client, _ = account_client
+    for _ in range(5):
+        assert (
+            client.post("/auth/resend-verification", json={"email": "nobody@example.com"}).status_code == 202
+        )
+    assert client.post("/auth/forgot-password", json={"email": "nobody@example.com"}).status_code == 429
+
+
+@pytest.mark.parametrize("purpose,fragment", [("verify", "verify-email"), ("reset", "reset-password")])
+def test_html_email_uses_production_origin(monkeypatch, purpose, fragment):
+    origin = "https://devhub-ai-z6gw.onrender.com"
+    monkeypatch.setattr(auth_mail, "settings", replace(auth_mail.settings, app_origin=origin))
+    original = httpx.Client
+    messages = []
+
+    def handle(request):
+        messages.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": "test-message"})
+
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs)
+    )
+    auth_mail.send_auth_email("test@example.com", "synthetic-token", purpose)
+    message = messages[0]
+    for kind in ("html", "text"):
+        assert f"{origin}/#{fragment}=synthetic-token" in message[kind]
+        assert "30 minutes" in message[kind]
+        assert "localhost" not in message[kind]
+    assert "<!doctype html>" in message["html"]

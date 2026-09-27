@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { AuthScreen } from '../AuthScreen';
+import { AuthScreen, ChangePassword } from '../AuthScreen';
 import App from '../App';
 import type { Session } from '../types';
 
@@ -30,7 +30,8 @@ describe('Authentication screens', () => {
     vi.stubGlobal('fetch', fetcher);
     render(<AuthScreen session={session} onLogin={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
-    await userEvent.type(screen.getByLabelText('Name'), 'One');
+    await userEvent.type(screen.getByLabelText('First Name'), 'One');
+    await userEvent.type(screen.getByLabelText('Last Name'), 'Person');
     await userEvent.type(screen.getByLabelText('Email', { exact: true }), 'one@example.com');
     await userEvent.type(screen.getByLabelText('Password', { exact: true }), password);
     await userEvent.type(screen.getByLabelText('Confirm password'), 'Another very long wrong password');
@@ -85,4 +86,24 @@ describe('Authentication screens', () => {
     expect(await screen.findByRole('heading', { name: 'Verify your email' })).toBeVisible();
     expect(window.location.hash).toBe('');
   });
+});
+
+
+it('changes a password with CSRF, confirmation, and logout callback', async () => {
+  const fetcher = vi.fn().mockResolvedValue(reply({ detail: 'Password changed' }));
+  vi.stubGlobal('fetch', fetcher);
+  const changed = vi.fn();
+  render(<ChangePassword session={{ ...session, csrf_token: 'test-csrf' }} onClose={vi.fn()} onChanged={changed} />);
+  await userEvent.type(screen.getByLabelText('Current password'), password);
+  await userEvent.type(screen.getByLabelText('New password', { exact: true }), password);
+  await userEvent.type(screen.getByLabelText('Confirm new password'), 'a different secure passphrase');
+  await userEvent.click(screen.getByRole('button', { name: 'Save password and sign out' }));
+  expect(screen.getByRole('alert')).toHaveTextContent('Passwords do not match');
+  expect(fetcher).not.toHaveBeenCalled();
+  await userEvent.clear(screen.getByLabelText('Confirm new password'));
+  await userEvent.type(screen.getByLabelText('Confirm new password'), password);
+  await userEvent.click(screen.getByRole('button', { name: 'Save password and sign out' }));
+  await waitFor(() => expect(changed).toHaveBeenCalled());
+  expect(fetcher.mock.calls[0][0]).toBe('/auth/change-password');
+  expect(new Headers(fetcher.mock.calls[0][1].headers).get('X-CSRF-Token')).toBe('test-csrf');
 });

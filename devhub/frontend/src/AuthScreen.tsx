@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { ArrowRight, Code2, Github, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { messageOf, request } from './api';
-import { Alert } from './ui';
+import { Alert, Modal } from './ui';
 import type { Session } from './types';
 
 export function AuthScreen({ session, onLogin, authLink = '' }: {
@@ -31,8 +31,8 @@ export function AuthScreen({ session, onLogin, authLink = '' }: {
         onLogin(await request<Session>('/auth/email-login', { method: 'POST', body: { email, password } }));
       } else {
         const path = { signup: 'signup', forgot: 'forgot-password', reset: 'reset-password', verify: 'verify-email', resend: 'resend-verification' }[mode];
-        const body = mode === 'signup' ? { email, password, display_name: values.get('name') }
-          : ['reset', 'verify'].includes(mode) ? { token, password } : { email };
+        const body = mode === 'signup' ? { email, password, first_name: values.get('first_name'), last_name: values.get('last_name'), confirm_password: values.get('confirm') }
+          : ['reset', 'verify'].includes(mode) ? { token, password, confirm_password: values.get('confirm') } : { email };
         const result = await request<{ detail: string }>(`/auth/${path}`, { method: 'POST', body });
         setNotice(result.detail);
         if (['reset', 'verify'].includes(mode)) { setMode('login'); onLogin({ ...session, user: null, csrf_token: null }); }
@@ -55,7 +55,7 @@ export function AuthScreen({ session, onLogin, authLink = '' }: {
       {providers.includes('github') ? <a className="button secondary large" href="/auth/login"><Github size={18} />Continue with GitHub</a> : <button className="button secondary large" disabled title="GitHub sign-in is not configured"><Github size={18} />Continue with GitHub</button>}
     </div><div className="auth-divider">or use your email</div></>}
     {session.email_enabled ? <form className="form-stack" onSubmit={submit} key={mode}>
-      {mode === 'signup' && <label>Name<input name="name" autoComplete="name" maxLength={100} required /></label>}
+      {mode === 'signup' && <><label>First Name<input name="first_name" autoComplete="given-name" maxLength={49} required /></label><label>Last Name<input name="last_name" autoComplete="family-name" maxLength={50} required /></label></>}
       {!['reset', 'verify'].includes(mode) && <label>Email<input name="email" type="email" autoComplete="email" maxLength={254} required /></label>}
       {!['forgot', 'resend'].includes(mode) && <label>Password<input name="password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={['signup', 'reset', 'verify'].includes(mode) ? 15 : 1} maxLength={128} required /></label>}
       {['signup', 'reset', 'verify'].includes(mode) && <><small className="muted">Use a unique passphrase of 15–128 characters.</small><label>Confirm password<input name="confirm" type="password" autoComplete="new-password" minLength={15} maxLength={128} required /></label></>}
@@ -69,7 +69,8 @@ export function AuthScreen({ session, onLogin, authLink = '' }: {
   </div></section></main>;
 }
 
-export function AccountConnections({ session }: { session: Session }) {
+export function AccountConnections({ session, onPasswordChanged }: { session: Session; onPasswordChanged: () => void }) {
+  const [changing, setChanging] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   async function connect(provider: string) {
@@ -79,5 +80,37 @@ export function AccountConnections({ session }: { session: Session }) {
       window.location.assign(result.url);
     } catch (cause) { setError(messageOf(cause)); setBusy(false); }
   }
-  return <div className="account-connections">{session.providers?.map(provider => <button key={provider} disabled={busy} onClick={() => void connect(provider)}>Connect {provider === 'google' ? 'Google' : 'GitHub'}</button>)}{error && <Alert>{error}</Alert>}</div>;
+  return <div className="account-connections">{session.email_enabled && <button onClick={() => setChanging(true)}>Change password</button>}{changing && <ChangePassword session={session} onClose={() => setChanging(false)} onChanged={onPasswordChanged} />}{session.providers?.map(provider => <button key={provider} disabled={busy} onClick={() => void connect(provider)}>Connect {provider === 'google' ? 'Google' : 'GitHub'}</button>)}{error && <Alert>{error}</Alert>}</div>;
+}
+
+
+export function ChangePassword({ session, onClose, onChanged }: {
+  session: Session; onClose: () => void; onChanged: () => void;
+}) {
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setError('');
+    const values = new FormData(event.currentTarget);
+    if (values.get('password') !== values.get('confirm')) { setError('Passwords do not match.'); return; }
+    setBusy(true);
+    try {
+      await request('/auth/change-password', { method: 'POST', csrf: session.csrf_token, body: {
+        current_password: values.get('current'), password: values.get('password'), confirm_password: values.get('confirm'),
+      } });
+      onChanged();
+    } catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(false); }
+  }
+  return <Modal title="Change password" onClose={onClose}>
+    <p className="muted">For verified email/password accounts. All devices will be signed out after this change. Accounts using only Google or GitHub manage their passwords with that provider.</p>
+    {error && <Alert>{error}</Alert>}
+    <form className="form-stack" onSubmit={submit}>
+      <label>Current password<input name="current" type="password" autoComplete="current-password" maxLength={128} required /></label>
+      <label>New password<input name="password" type="password" autoComplete="new-password" minLength={15} maxLength={128} required /></label>
+      <small className="muted">Use a unique passphrase of 15–128 characters.</small>
+      <label>Confirm new password<input name="confirm" type="password" autoComplete="new-password" minLength={15} maxLength={128} required /></label>
+      <button className="button primary" disabled={busy}>{busy ? 'Updating…' : 'Save password and sign out'}</button>
+    </form>
+  </Modal>;
 }
