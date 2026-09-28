@@ -23,7 +23,20 @@ test('organization to project, task, discussion, AI state and logout', async ({ 
   await page.getByRole('combobox', { name: 'Status', exact: true }).selectOption('in_progress');
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
   await expect(page.getByRole('region', { name: 'In progress', exact: true })).toContainText('Verify tenant isolation');
-  await page.screenshot({ path: `../output/playwright/devhub-${testInfo.project.name}.png`, fullPage: true });
+  for (const width of testInfo.project.name === 'mobile' ? [320, 375, 390] : [768, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ['light', 'dark']) {
+      await page.getByLabel('Appearance').selectOption(theme);
+      await page.getByRole('heading', { name: 'Platform launch', exact: true }).click();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ animations: 'disabled', path: `../output/playwright/board-${width}-${theme}.png`, fullPage: true });
+      await page.getByRole('button', { name: /Verify tenant isolation/ }).click();
+      await page.screenshot({ animations: 'disabled', path: `../output/playwright/task-${width}-${theme}.png`, fullPage: false });
+      expect(await page.evaluate(() => !!document.activeElement?.closest('dialog'))).toBe(true);
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+    }
+  }
   await page.getByRole('button', { name: 'Discussions', exact: true }).click();
   await page.getByRole('button', { name: 'New discussion', exact: true }).click();
   await page.getByRole('textbox', { name: 'Title', exact: true }).fill('Launch readiness');

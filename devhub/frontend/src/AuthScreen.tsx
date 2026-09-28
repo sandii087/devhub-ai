@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { ArrowRight, Code2, Github, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { passwordInputMaxLength, passwordRequirements, validPassword } from './passwordPolicy';
 import { messageOf, request } from './api';
-import { Alert, Modal } from './ui';
+import { Alert, Modal, PasswordField } from './ui';
 import type { Session } from './types';
 
 export function AuthScreen({ session, onLogin, authLink = '' }: {
@@ -19,7 +19,7 @@ export function AuthScreen({ session, onLogin, authLink = '' }: {
   const providers = session.providers ?? (session.auth_mode === 'github' ? ['github'] : []);
   const change = (next: string) => { setMode(next); setError(''); setNotice(''); };
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setError(''); setNotice('');
+    event.preventDefault(); if (busy) return; setError(''); setNotice('');
     const values = new FormData(event.currentTarget);
     const email = String(values.get('email') ?? '');
     const password = String(values.get('password') ?? '');
@@ -51,16 +51,16 @@ export function AuthScreen({ session, onLogin, authLink = '' }: {
   </section><section className="login-form-wrap"><div className="login-form">
     <span className="eyebrow">YOUR WORK STARTS HERE</span><h2>{title}</h2>
     <p className="muted">{mode === 'verify' ? 'Choose your password to confirm ownership of this email address.' : 'Your people, projects, and next big idea.'}</p>
-    {error && <Alert>{error}</Alert>}{notice && <p className="auth-notice" role="status">{notice}</p>}
+    {error && <Alert id="auth-error">{error}</Alert>}{notice && <p className="auth-notice" role="status">{notice}</p>}
     {['login', 'signup'].includes(mode) && <><div className="auth-providers">
       {providers.includes('google') ? <a className="button secondary large" href="/auth/google/login">Continue with Google</a> : <button className="button secondary large" disabled title="Google sign-in is not configured">Continue with Google</button>}
       {providers.includes('github') ? <a className="button secondary large" href="/auth/login"><Github size={18} />Continue with GitHub</a> : <button className="button secondary large" disabled title="GitHub sign-in is not configured"><Github size={18} />Continue with GitHub</button>}
     </div><div className="auth-divider">or use your email</div></>}
-    {mode === 'success' ? <p className="muted">Your account is ready. Sign in to continue securely.</p> : session.email_enabled ? <form className="form-stack" onSubmit={submit} key={mode}>
+    {mode === 'success' ? <p className="muted">Your account is ready. Sign in to continue securely.</p> : session.email_enabled ? <form className="form-stack" onSubmit={submit} key={mode} aria-busy={busy}>
       {mode === 'signup' && <><label>First Name<input name="first_name" autoComplete="given-name" maxLength={49} required /></label><label>Last Name<input name="last_name" autoComplete="family-name" maxLength={50} required /></label></>}
       {!['reset', 'verify'].includes(mode) && <label>Email<input name="email" type="email" autoComplete="email" maxLength={254} required /></label>}
-      {!['forgot', 'resend'].includes(mode) && <label>Password<input name="password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={['signup', 'reset', 'verify'].includes(mode) ? 8 : 1} maxLength={passwordInputMaxLength} required /></label>}
-      {['signup', 'reset', 'verify'].includes(mode) && <><small className="muted">{passwordRequirements}</small><label>Confirm password<input name="confirm" type="password" autoComplete="new-password" minLength={8} maxLength={passwordInputMaxLength} required /></label></>}
+      {!['forgot', 'resend'].includes(mode) && <PasswordField label="Password" name="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={['signup', 'reset', 'verify'].includes(mode) ? 8 : 1} maxLength={passwordInputMaxLength} required disabled={busy} aria-invalid={!!error} aria-describedby={error ? 'auth-error' : undefined} />}
+      {['signup', 'reset', 'verify'].includes(mode) && <><small className="muted">{passwordRequirements}</small><PasswordField label="Confirm password" name="confirm" autoComplete="new-password" minLength={8} maxLength={passwordInputMaxLength} required disabled={busy} aria-invalid={!!error} aria-describedby={error ? 'auth-error' : undefined} /></>}
       <button className="button primary large" disabled={busy || (['signup', 'forgot', 'resend'].includes(mode) && !session.email_delivery)}>{busy ? <LoaderCircle className="spin" size={18} /> : <>{({ login: 'Login', signup: 'Create account', forgot: 'Send reset link', reset: 'Reset password', verify: 'Verify email', resend: 'Send verification link' })[mode]}<ArrowRight size={18} /></>}</button>
       {!session.email_delivery && mode !== 'login' && <p className="muted">Email delivery is not configured yet.</p>}
     </form> : <Alert>Email sign-in is not configured yet. Use an available provider above.</Alert>}
@@ -83,7 +83,7 @@ export function AccountConnections({ session, onPasswordChanged, showPassword = 
       window.location.assign(result.url);
     } catch (cause) { setError(messageOf(cause)); setBusy(false); }
   }
-  return <div className="account-connections">{showPassword && session.email_enabled && <button onClick={() => setChanging(true)}>Change password</button>}{changing && <ChangePassword session={session} onClose={() => setChanging(false)} onChanged={onPasswordChanged} />}{session.providers?.map(provider => <button key={provider} disabled={busy} onClick={() => void connect(provider)}>Connect {provider === 'google' ? 'Google' : 'GitHub'}</button>)}{error && <Alert>{error}</Alert>}</div>;
+  return <div className="account-connections">{showPassword && session.email_enabled && <button onClick={() => setChanging(true)}>Change password</button>}{changing && <ChangePassword session={session} onClose={() => setChanging(false)} onChanged={onPasswordChanged} />}{session.providers?.map(provider => <button key={provider} disabled={busy} onClick={() => void connect(provider)}>Connect {provider === 'google' ? 'Google' : 'GitHub'}</button>)}{error && <Alert id="account-error">{error}</Alert>}</div>;
 }
 
 
@@ -108,12 +108,11 @@ export function ChangePassword({ session, onClose, onChanged }: {
   }
   return <Modal title="Change password" onClose={onClose}>
     <p className="muted">For verified email/password accounts. All devices will be signed out after this change. Accounts using only Google or GitHub manage their passwords with that provider.</p>
-    {error && <Alert>{error}</Alert>}
+    {error && <Alert id="password-error">{error}</Alert>}
     <form className="form-stack" onSubmit={submit}>
-      <label>Current password<input name="current" type="password" autoComplete="current-password" maxLength={passwordInputMaxLength} required /></label>
-      <label>New password<input name="password" type="password" autoComplete="new-password" minLength={8} maxLength={passwordInputMaxLength} required /></label>
-      <small className="muted">{passwordRequirements}</small>
-      <label>Confirm new password<input name="confirm" type="password" autoComplete="new-password" minLength={8} maxLength={passwordInputMaxLength} required /></label>
+      <PasswordField label="Current password" name="current" autoComplete="current-password" maxLength={passwordInputMaxLength} required disabled={busy} aria-invalid={!!error} aria-describedby={error ? 'password-error' : undefined} />
+      <PasswordField hint={passwordRequirements} label="New password" name="password" autoComplete="new-password" minLength={8} maxLength={passwordInputMaxLength} required disabled={busy} aria-invalid={!!error} aria-describedby={error ? 'password-error' : undefined} />
+      <PasswordField label="Confirm new password" name="confirm" autoComplete="new-password" minLength={8} maxLength={passwordInputMaxLength} required disabled={busy} aria-invalid={!!error} aria-describedby={error ? 'password-error' : undefined} />
       <button className="button primary" disabled={busy}>{busy ? 'Updating…' : 'Save password and sign out'}</button>
     </form>
   </Modal>;

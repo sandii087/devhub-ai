@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { LoaderCircle, Trash2 } from 'lucide-react';
+import { allowNavigation, useUnsavedChanges } from './useUnsavedChanges';
 import { messageOf, request } from './api';
 import { Alert, Modal } from './ui';
 import type { Member, Priority, Task, TaskStatus, User } from './types';
@@ -21,6 +22,9 @@ export function TaskForm({ task, initialStatus = 'todo', path, csrf, members, us
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const dirty = title !== (task?.title ?? '') || description !== (task?.description ?? '') || status !== (task?.status ?? initialStatus) || priority !== (task?.priority ?? 'medium') || assignee !== (task?.assignee_id ?? '');
+  useUnsavedChanges(dirty);
+  const close = () => { if (!busy && allowNavigation()) onClose(); };
   const eligibleMembers = members.length ? members.filter(member => member.active !== false) : [{ user_id: user.id, display_name: user.display_name, email: user.email }];
   async function save(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError('');
@@ -34,7 +38,7 @@ export function TaskForm({ task, initialStatus = 'todo', path, csrf, members, us
     try { await request(`${path}/${task!.id}`, { method: 'DELETE', csrf }); onSaved(); onClose(); }
     catch (cause) { setError(messageOf(cause)); } finally { setBusy(false); }
   }
-  return <Modal title={task ? 'Task details' : 'Create a task'} onClose={onClose}>
+  return <Modal title={task ? 'Task details' : 'Create a task'} onClose={close}>
     <form onSubmit={save} className="form-stack">
       {error && <Alert>{error}</Alert>}
       <label>Title<input autoFocus required maxLength={200} value={title} onChange={event => setTitle(event.target.value)} placeholder="What needs to get done?" disabled={!canEdit || busy} /></label>
@@ -43,7 +47,7 @@ export function TaskForm({ task, initialStatus = 'todo', path, csrf, members, us
       <label>Assignee<select value={assignee} onChange={event => setAssignee(event.target.value)} disabled={!canEdit || busy}><option value="">Unassigned</option>{eligibleMembers.map(member => <option key={member.user_id} value={member.user_id}>{member.display_name || member.email}{member.user_id === user.id ? ' (you)' : ''}</option>)}{assignee && !eligibleMembers.some(member => member.user_id === assignee) && <option value={assignee}>Current assignee</option>}</select></label>
       {members.length > 0 && <p className="field-hint">Assignees must also have access to this project.</p>}
       {confirmDelete && <div className="delete-confirm"><p>Delete this task? This cannot be undone.</p><button type="button" className="button danger" disabled={busy} onClick={remove}>Delete task</button><button type="button" className="button secondary" onClick={() => setConfirmDelete(false)}>Keep task</button></div>}
-      <div className="modal-actions">{task && canDelete && !confirmDelete && <button className="icon-button danger-text" type="button" aria-label="Delete task" onClick={() => setConfirmDelete(true)}><Trash2 size={18} /></button>}<span className="spacer" /><button type="button" className="button secondary" onClick={onClose}>{canEdit ? 'Cancel' : 'Close'}</button>{canEdit && <button className="button primary" disabled={busy || !title.trim()}>{busy && <LoaderCircle size={16} className="spin" />}{task ? 'Save changes' : 'Create task'}</button>}</div>
+      <div className="modal-actions">{task && canDelete && !confirmDelete && <button className="icon-button danger-text" type="button" aria-label="Delete task" onClick={() => setConfirmDelete(true)}><Trash2 size={18} /></button>}<span className="spacer" /><button type="button" className="button secondary" onClick={close}>{canEdit ? 'Cancel' : 'Close'}</button>{canEdit && <button className="button primary" disabled={busy || !title.trim()}>{busy && <LoaderCircle size={16} className="spin" />}{task ? 'Save changes' : 'Create task'}</button>}</div>
     </form>
   </Modal>;
 }

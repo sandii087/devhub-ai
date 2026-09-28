@@ -48,3 +48,17 @@ describe('Workspace boundaries', () => {
     expect(screen.queryByText('Your draft')).not.toBeInTheDocument();
   });
 });
+
+it('keeps a task draft when cancellation is declined', async () => {
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+  const onClose = vi.fn();
+  render(<TaskForm path="/tasks" csrf="csrf" members={[]} user={user} canEdit canDelete={false} onClose={onClose} onSaved={vi.fn()} />);
+  await userEvent.type(screen.getByLabelText('Title', { exact: true }), 'Unsaved task');
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(onClose).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('Title', { exact: true })).toHaveValue('Unsaved task');
+  confirm.mockReturnValue(true);
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(onClose).toHaveBeenCalledOnce();
+  confirm.mockRestore();
+});
