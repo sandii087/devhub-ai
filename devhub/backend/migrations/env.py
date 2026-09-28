@@ -19,9 +19,7 @@ if context.is_offline_mode():
         context.run_migrations()
 else:
     engine = create_engine(
-        migration_database_url.replace(
-            "postgresql://", "postgresql+psycopg://", 1
-        ),
+        migration_database_url.replace("postgresql://", "postgresql+psycopg://", 1),
         poolclass=pool.NullPool,
     )
 
