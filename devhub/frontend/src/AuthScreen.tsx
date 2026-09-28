@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { ArrowRight, Code2, Github, LoaderCircle, ShieldCheck } from 'lucide-react';
-import { passwordRequirements, validPassword } from './passwordPolicy';
+import { passwordInputMaxLength, passwordRequirements, validPassword } from './passwordPolicy';
 import { messageOf, request } from './api';
 import { Alert, Modal } from './ui';
 import type { Session } from './types';
@@ -59,8 +59,8 @@ export function AuthScreen({ session, onLogin, authLink = '' }: {
     {mode === 'success' ? <p className="muted">Your account is ready. Sign in to continue securely.</p> : session.email_enabled ? <form className="form-stack" onSubmit={submit} key={mode}>
       {mode === 'signup' && <><label>First Name<input name="first_name" autoComplete="given-name" maxLength={49} required /></label><label>Last Name<input name="last_name" autoComplete="family-name" maxLength={50} required /></label></>}
       {!['reset', 'verify'].includes(mode) && <label>Email<input name="email" type="email" autoComplete="email" maxLength={254} required /></label>}
-      {!['forgot', 'resend'].includes(mode) && <label>Password<input name="password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={['signup', 'reset', 'verify'].includes(mode) ? 8 : 1} maxLength={128} required /></label>}
-      {['signup', 'reset', 'verify'].includes(mode) && <><small className="muted">{passwordRequirements}</small><label>Confirm password<input name="confirm" type="password" autoComplete="new-password" minLength={8} maxLength={128} required /></label></>}
+      {!['forgot', 'resend'].includes(mode) && <label>Password<input name="password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={['signup', 'reset', 'verify'].includes(mode) ? 8 : 1} maxLength={passwordInputMaxLength} required /></label>}
+      {['signup', 'reset', 'verify'].includes(mode) && <><small className="muted">{passwordRequirements}</small><label>Confirm password<input name="confirm" type="password" autoComplete="new-password" minLength={8} maxLength={passwordInputMaxLength} required /></label></>}
       <button className="button primary large" disabled={busy || (['signup', 'forgot', 'resend'].includes(mode) && !session.email_delivery)}>{busy ? <LoaderCircle className="spin" size={18} /> : <>{({ login: 'Login', signup: 'Create account', forgot: 'Send reset link', reset: 'Reset password', verify: 'Verify email', resend: 'Send verification link' })[mode]}<ArrowRight size={18} /></>}</button>
       {!session.email_delivery && mode !== 'login' && <p className="muted">Email delivery is not configured yet.</p>}
     </form> : <Alert>Email sign-in is not configured yet. Use an available provider above.</Alert>}
@@ -110,10 +110,10 @@ export function ChangePassword({ session, onClose, onChanged }: {
     <p className="muted">For verified email/password accounts. All devices will be signed out after this change. Accounts using only Google or GitHub manage their passwords with that provider.</p>
     {error && <Alert>{error}</Alert>}
     <form className="form-stack" onSubmit={submit}>
-      <label>Current password<input name="current" type="password" autoComplete="current-password" maxLength={128} required /></label>
-      <label>New password<input name="password" type="password" autoComplete="new-password" minLength={8} maxLength={128} required /></label>
+      <label>Current password<input name="current" type="password" autoComplete="current-password" maxLength={passwordInputMaxLength} required /></label>
+      <label>New password<input name="password" type="password" autoComplete="new-password" minLength={8} maxLength={passwordInputMaxLength} required /></label>
       <small className="muted">{passwordRequirements}</small>
-      <label>Confirm new password<input name="confirm" type="password" autoComplete="new-password" minLength={8} maxLength={128} required /></label>
+      <label>Confirm new password<input name="confirm" type="password" autoComplete="new-password" minLength={8} maxLength={passwordInputMaxLength} required /></label>
       <button className="button primary" disabled={busy}>{busy ? 'Updating…' : 'Save password and sign out'}</button>
     </form>
   </Modal>;

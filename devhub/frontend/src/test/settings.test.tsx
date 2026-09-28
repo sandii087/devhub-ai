@@ -54,3 +54,17 @@ it('validates every password requirement in the frontend', () => {
   expect(validPassword('Aa1_aaaa')).toBe(true);
   for (const value of ['Aa1!aaa', 'aa1!aaaa', 'AA1!AAAA', 'Aa!!aaaa', 'Aa12aaaa', 'Aa1!' + 'a'.repeat(125)]) expect(validPassword(value)).toBe(false);
 });
+
+// These boundary cases are also checked against the unchanged Python validator.
+it.each([
+  ['Aa1!😀😀', false],
+  ['Aa1!' + '😀'.repeat(3), false],
+  ['Aa1!' + '😀'.repeat(4), true],
+  ['Aa1!' + '😀'.repeat(124), true],
+  ['Aa1!' + '😀'.repeat(125), false],
+  ['Aa1!' + 'a'.repeat(124), true],
+  ['Aa1!' + 'a'.repeat(125), false],
+  ['Aa1!e\u0301e\u0301', true],
+])('counts Unicode code points for password length: %s', (value, accepted) => {
+  expect(validPassword(value)).toBe(accepted);
+});

@@ -120,3 +120,24 @@ it('shows an explicit reset success state with a return to login', async () => {
   await userEvent.click(screen.getByRole('button', { name: 'Back to login' }));
   expect(screen.getByRole('heading', { name: 'Welcome to DevHub' })).toBeVisible();
 });
+
+it('does not truncate a valid 128-code-point password and rejects short emoji passwords', async () => {
+  const fetcher = vi.fn().mockResolvedValue(reply({ detail: 'Password updated' }));
+  vi.stubGlobal('fetch', fetcher);
+  const user = userEvent.setup();
+  render(<AuthScreen session={session} onLogin={vi.fn()} authLink={'#reset-password=' + 'x'.repeat(43)} />);
+  const input = screen.getByLabelText('Password', { exact: true });
+  const confirm = screen.getByLabelText('Confirm password');
+  for (const field of [input, confirm]) { await user.click(field); await user.paste('Aa1!😀😀'); }
+  await user.click(screen.getByRole('button', { name: 'Reset password' }));
+  expect(screen.getByRole('alert')).toHaveTextContent('8–128 characters');
+  expect(fetcher).not.toHaveBeenCalled();
+  const value = 'Aa1!' + '😀'.repeat(124);
+  for (const field of [input, confirm]) {
+    await user.clear(field); await user.click(field); await user.paste(value);
+    expect(field).toHaveValue(value);
+  }
+  await user.click(screen.getByRole('button', { name: 'Reset password' }));
+  await screen.findByRole('status');
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).password).toBe(value);
+});
