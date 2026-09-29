@@ -178,3 +178,71 @@ frontend/src/AuthScreen.tsx, frontend/src/App.tsx, frontend/src/test/auth.test.t
 and this document. Earlier uncommitted startup migration changes are preserved.
 
 Profile/settings routes, avatar storage and the current password policy are documented in [profile-settings.md](profile-settings.md).
+
+## Password-recovery delivery troubleshooting
+
+The Security page posts the signed-in email to `/auth/forgot-password`; the public
+forgot-password form uses the same endpoint. An enabled user must have a verified
+`password_credentials` row for that email. OAuth-only, unverified, disabled and
+unknown accounts deliberately receive the same generic 202 response, but no reset
+token or email. Security settings now disable the action when the authenticated
+profile has no verified local password. This does not change public responses or
+create passwords for OAuth accounts.
+
+For an eligible account, the backend replaces earlier reset tokens, stores only
+the new token's hash with a 30-minute expiry, commits, and schedules the Resend
+HTTPS request as an in-process background task. No SMTP variables are used.
+`APP_ORIGIN` builds the link as `/#reset-password=<token>`; App captures and removes
+the fragment, AuthScreen submits it with the new password to `/auth/reset-password`.
+Successful consumption changes the password, deletes the user's email tokens and
+revokes all sessions. Reused/expired tokens are rejected. Password policy is unchanged.
+
+In **Render → existing devhub-ai service → Environment**, verify:
+
+| Variable | Required value/source |
+| --- | --- |
+| `EMAIL_AUTH_ENABLED` | `true` |
+| `RESEND_API_KEY` | Private, active Resend API key with permission to send from the chosen domain |
+| `EMAIL_FROM` | Sender on a domain verified in that Resend account; obtain the address from your sender setup, do not invent it |
+| `APP_ORIGIN` | `https://devhub-ai-z6gw.onrender.com` |
+| `ENVIRONMENT` | `production` |
+| `DEV_AUTH_ENABLED` | `false` |
+
+Save environment changes and redeploy the existing service. Do not change database
+credentials. `render.yaml` does not provision email credentials; these must be
+supplied in the service environment. `/auth/session` reporting `email_delivery=true`
+only proves nonempty sender/key configuration, not valid credentials or delivery.
+Missing sender/key returns 503 before token issuance; it does not produce a generic
+202. The Docker image includes the email adapter, and no extra worker is needed.
+
+After one eligible recovery request, inspect private Render logs:
+
+- `Authentication email delivery failed: provider_http_status=<number>` means
+  Resend rejected the request. Inspect the corresponding Resend dashboard event
+  privately for the precise cause. Check key permissions/validity, verified sender,
+  recipient restrictions and quota; do not copy provider bodies into application logs.
+- `timeout` or `transport` means the provider request could not be completed;
+  `unexpected` requires further operator investigation. The public response stays generic.
+- `Authentication email accepted by provider` (INFO level) means Resend accepted
+  the request, **not** that it reached the inbox. Check Resend delivery, bounce and
+  suppression events, then inbox/spam. INFO logs may require your existing logging
+  configuration to enable that level; absence alone is not proof of no attempt.
+
+Resend's test sender restricts delivery to the account owner's email; general-user
+recovery needs a verified sender domain. See the official
+[Resend errors](https://resend.com/docs/api-reference/errors) and
+[test-domain restriction](https://resend.com/docs/knowledge-base/403-error-resend-dev-domain).
+Do not activate paid billing or buy a domain automatically. If a suitable verified
+sender is unavailable, delivery remains blocked pending operator configuration.
+
+Delivery remains best-effort: process interruption can lose a background send.
+Request a fresh link after resolving an error; only the newest link remains valid.
+No automatic retry is added, avoiding duplicate sends after an ambiguous timeout.
+
+Browser verification: use an existing verified email/password account, open
+Settings → Security, request one email, and open the latest link within 30 minutes.
+Reset to a valid new password; confirm the old password and previous sessions fail,
+the new password works, and reusing the link is rejected. For an OAuth-only account,
+confirm the reset button is disabled and provider recovery guidance is visible.
+Actual inbox delivery must be verified with the real sender; mocked tests do not
+prove production delivery.

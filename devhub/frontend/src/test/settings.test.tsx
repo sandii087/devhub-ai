@@ -68,3 +68,25 @@ it.each([
 ])('counts Unicode code points for password length: %s', (value, accepted) => {
   expect(validPassword(value)).toBe(accepted);
 });
+
+it.each([
+  { password_enabled: false, email_verified: false },
+  { password_enabled: true, email_verified: false },
+])('does not offer recovery without a verified local password: %j', async flags => {
+  const fetcher = vi.fn().mockResolvedValue(reply({ ...profile, ...flags }));
+  vi.stubGlobal('fetch', fetcher);
+  render(<Settings tab="security" session={session} onUser={vi.fn()} onLogout={vi.fn()} onBack={vi.fn()} />);
+  const button = await screen.findByRole('button', { name: 'Send password reset email' });
+  expect(button).toBeDisabled();
+  expect(screen.getByText(/recover access through that provider/)).toBeVisible();
+  await userEvent.click(button);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it('shows delivery request failures without a success notice', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(path => Promise.resolve(path === '/api/v1/me' ? reply(profile) : new Response(JSON.stringify({ detail: 'Email delivery is not configured' }), { status: 503 }))));
+  render(<Settings tab="security" session={session} onUser={vi.fn()} onLogout={vi.fn()} onBack={vi.fn()} />);
+  await userEvent.click(await screen.findByRole('button', { name: 'Send password reset email' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Email delivery is not configured');
+  expect(screen.queryByRole('status')).not.toBeInTheDocument();
+});

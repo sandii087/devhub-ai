@@ -667,3 +667,69 @@ def test_weak_reset_password_does_not_consume_token(account_client):
         ).status_code
         == 200
     )
+
+
+@pytest.mark.parametrize("eligibility", ["unknown", "oauth_only", "unverified", "disabled"])
+def test_ineligible_recovery_never_issues_token_or_email(account_client, database, eligibility):
+    client, mail = account_client
+    if eligibility == "oauth_only":
+        with database() as db:
+            auth._identity_user(db, "https://github.com", "recovery-user", "person@example.com", "Person")
+            db.commit()
+    elif eligibility in {"unverified", "disabled"}:
+        signup(client)
+        if eligibility == "disabled":
+            client.post("/auth/verify-email", json={"token": mail[-1][1], "password": PASSWORD})
+            with database() as db:
+                db.execute(update(User).values(disabled=True))
+                db.commit()
+    before = len(mail)
+    response = client.post("/auth/forgot-password", json={"email": "person@example.com"})
+    assert response.status_code == 202 and response.json() == email_auth.GENERIC
+    assert len(mail) == before
+    with database() as db:
+        assert (
+            db.scalar(select(func.count()).select_from(EmailToken).where(EmailToken.purpose == "reset")) == 0
+        )
+
+
+@pytest.mark.parametrize("field", ["resend_api_key", "email_from"])
+def test_recovery_missing_mail_configuration_creates_no_reset(account_client, database, monkeypatch, field):
+    client, mail = verified(account_client)
+    monkeypatch.setattr(auth_mail, "settings", replace(auth_mail.settings, **{field: ""}))
+    before = len(mail)
+    with database() as db:
+        token_hashes = set(db.scalars(select(EmailToken.token_hash)))
+    assert client.post("/auth/forgot-password", json={"email": "person@example.com"}).status_code == 503
+    assert len(mail) == before
+    with database() as db:
+        assert set(db.scalars(select(EmailToken.token_hash))) == token_hashes
+
+
+@pytest.mark.parametrize("outcome", [200, 401, 403, 422, 429, 500, "timeout", "transport", "unexpected"])
+def test_mail_diagnostics_never_log_message_or_exception_contents(monkeypatch, caplog, outcome):
+    original = httpx.Client
+    sensitive = "synthetic-private-provider-content"
+
+    def handle(request):
+        if outcome == "timeout":
+            raise httpx.ReadTimeout(sensitive, request=request)
+        if outcome == "transport":
+            raise httpx.ConnectError(sensitive, request=request)
+        if outcome == "unexpected":
+            raise ValueError(sensitive)
+        return httpx.Response(outcome, text=sensitive)
+
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs)
+    )
+    with caplog.at_level("INFO", logger="devhub.auth_mail"):
+        auth_mail.send_auth_email("private-recipient@example.com", "private-reset-token", "reset")
+    if outcome == 200:
+        assert "Authentication email accepted by provider" in caplog.text
+    elif isinstance(outcome, int):
+        assert f"provider_http_status={outcome}" in caplog.text
+    else:
+        assert f"delivery failed: {outcome}" in caplog.text
+    for private in (sensitive, "private-recipient@example.com", "private-reset-token"):
+        assert private not in caplog.text

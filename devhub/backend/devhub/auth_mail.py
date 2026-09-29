@@ -45,5 +45,17 @@ def send_auth_email(email: str, token: str, purpose: str) -> None:
                 },
             )
             response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        # Only the numeric status is safe: provider bodies and exception strings may contain secrets.
+        logging.getLogger("devhub.auth_mail").error(
+            "Authentication email delivery failed: provider_http_status=%s", exc.response.status_code
+        )
+    except httpx.TimeoutException:
+        logging.getLogger("devhub.auth_mail").error("Authentication email delivery failed: timeout")
+    except httpx.RequestError:
+        logging.getLogger("devhub.auth_mail").error("Authentication email delivery failed: transport")
     except Exception:
-        logging.getLogger("devhub.auth_mail").error("Authentication email delivery failed")
+        logging.getLogger("devhub.auth_mail").error("Authentication email delivery failed: unexpected")
+    else:
+        # Accepted is not inbox delivery; inspect Resend delivery events for bounces/suppressions.
+        logging.getLogger("devhub.auth_mail").info("Authentication email accepted by provider")
